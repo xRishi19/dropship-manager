@@ -1,0 +1,90 @@
+{
+  "database": "data/sourcing.sqlite3",
+  "reports_dir": "reports",
+  "output_dir": "output",
+  "model": "gpt-5.4-mini",
+  "analysis_days": 90,
+  "recent_days": 28,
+  "min_total_units": 2,
+  "min_successful_listings": 2,
+  "min_successful_products": 2,
+  "min_alnum_token_products": 5,
+  "max_product_share": 0.75,
+  "min_lift": 1.0,
+  "lift_prior_units": 2,
+  "min_trend_units": 4,
+  "candidate_limit": 200,
+  "unigram_allowlist": [
+    "oem", "toyota", "honda", "ford", "chevy", "chevrolet", "gmc", "dodge", "ram", "jeep", "nissan", "hyundai",
+    "kia", "subaru", "mazda", "mitsubishi", "volkswagen", "vw", "audi", "bmw", "mercedes", "lexus", "acura", "infiniti",
+    "cadillac", "buick", "lincoln", "chrysler", "tesla", "volvo", "porsche", "polaris", "yamaha", "kawasaki", "suzuki", "harley",
+    "tacoma", "tundra", "camry", "corolla", "highlander", "sienna", "prius", "sequoia", "avalon", "civic", "accord", "odyssey",
+    "silverado", "sierra", "tahoe", "suburban", "colorado", "equinox", "traverse", "malibu", "impala", "camaro", "corvette", "mustang",
+    "explorer", "expedition", "bronco", "wrangler", "cherokee", "gladiator", "durango", "challenger", "altima", "sentra", "rogue", "frontier",
+    "pathfinder", "murano", "maxima", "elantra", "sonata", "tucson", "sorento", "sportage", "optima", "forte", "outback", "forester",
+    "impreza", "crosstrek", "wrx", "miata", "cr-v", "hr-v"
+  ],
+  "blocked_phrases": [
+    "iridium spark",
+    "wheel lug",
+    "direct replacement"
+  ],
+  "weights": {
+    "units": 5.0,
+    "recent_units": 3.0,
+    "breadth": 2.0,
+    "lift": 3.0,
+    "concentration": 3.0
+  },
+  "tiers": {
+    "proven_min_units": 5,
+    "proven_asins": 200,
+    "explore_asins": 50,
+    "explore_min_new_category": 4,
+    "explore_cooldown_weeks": 4
+  },
+  "ebay": {
+    "order_lookback_days": 90,
+    "site_id": 0,
+    "trading_version": "1477"
+  },
+  "accounting": {
+    "start_date": "2026-01-01",
+    "timezone": null,
+    "prime_cashback_rate": 0.05,
+    "ordering_fee_cents": 30
+  },
+  "sync": {
+    "enabled": true,
+    "interval_seconds": 60,
+    "order_overlap_minutes": 5,
+    "listings_refresh_hours": 24,
+    "returns_interval_minutes": 10,
+    "backfill_chunk_days": 30
+  },
+  "matching": {
+    "window_hours": 24,
+    "skew_minutes": 15,
+    "recheck_hours": 26,
+    "quantity_match": 25,
+    "quantity_mismatch": -30,
+    "first_name_match": 25,
+    "first_name_mismatch": -15,
+    "city_match": 20,
+    "city_mismatch": -20,
+    "state_match": 15,
+    "time_max": 15,
+    "category_match": 3,
+    "personal_recipients": [],
+    "auto_match_score": 80,
+    "auto_match_margin": 15,
+    "review_score": 50
+  },
+  "gmail": {
+    "enabled": true,
+    "client_secret_path": "secrets/gmail_client.json",
+    "token_path": "data/gmail_token.json",
+    "query": "from:auto-confirm@amazon.com subject:Ordered"
+  },
+  "column_mapping": {}
+}

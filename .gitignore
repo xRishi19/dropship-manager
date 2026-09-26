@@ -1,0 +1,34 @@
+# Credentials, tokens and personal settings (never commit)
+config.local.json
+.env
+.env.*
+!.env.example
+secrets/
+*token*.json
+client_secret*.json
+
+# Local data: SQLite database, backups, Gmail token, downloads and generated output
+data/
+reports/
+output/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/next-env.d.ts
+frontend/*.tsbuildinfo
+
+# OS files
+.DS_Store
+
+# Private notes (business-specific; never shared)
+notes/
