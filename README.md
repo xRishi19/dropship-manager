@@ -11,6 +11,76 @@ Code layout: `backend/integrations/` (eBay, Gmail), `backend/services/` (sync, r
 
 The rest of this README documents the sourcing engine and its command-line interface, which share the app's database and eBay integration.
 
+## Getting your API credentials
+
+The app needs credentials from three services. Everything secret goes in `.env` or `secrets/`, both git-ignored. Never commit them or paste them anywhere public. Start by copying the template:
+
+```bash
+cp -n .env.example .env
+```
+
+### 1. eBay: `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_REDIRECT_URI`, `EBAY_REFRESH_TOKEN`
+
+These let the app read **your own seller account**: orders, payouts and fees, returns and listings. Access is read-only.
+
+1. **Join the developer program.** Go to the [eBay Developers Program](https://developer.ebay.com/) and sign in with your eBay account (or register). Accept the API License Agreement.
+2. **Create a production keyset.** Open **Hi (your name) → Application Keysets** (<https://developer.ebay.com/my/keys>) and create a **Production** keyset. The app name can be anything, e.g. `dropship-manager`.
+   - eBay may first ask about **marketplace account deletion notifications** before the production keys work. Follow the prompt: either give an endpoint, or apply for the exemption if eligible.
+3. **Copy the two keys into `.env`:**
+   - **App ID (Client ID)** → `EBAY_CLIENT_ID`
+   - **Cert ID (Client Secret)** → `EBAY_CLIENT_SECRET`
+   - The Dev ID isn't needed.
+4. **Create a RuName** (eBay's name for a redirect URL). On the keyset, open **User Tokens** → **Get a Token from eBay via Your Application** → **Add eBay Redirect URL**.
+   - Fill in the privacy policy URL and the **auth accepted URL**. Any https page you control works, e.g. your GitHub profile; you'll only copy the address bar from it.
+   - Save, then copy the **RuName** (a long string like `Your_Name-dropship-PRD-...`) into `EBAY_REDIRECT_URI`.
+5. **Get the refresh token.** From the project folder, run:
+   ```bash
+   .venv/bin/python ebay_auth.py
+   ```
+   - It prints a consent link. Sign in with **your seller account** and click **Agree**.
+   - eBay then redirects to your accepted URL. Copy the **entire** address from the browser and paste it into the terminal; the input is hidden.
+   - The script saves `EBAY_REFRESH_TOKEN` to `.env`. It lasts about 18 months; re-run the script when it expires.
+   - The consent covers the `api_scope`, `sell.fulfillment.readonly` and `sell.finances` scopes. If a token made before `sell.finances` was added is still in use, re-run the script; until then revenue is shown as an estimate.
+   - Leave `EBAY_ENVIRONMENT=production`. `sandbox` is eBay's test system, with fake data.
+
+### 2. OpenAI: `OPENAI_API_KEY`
+
+Only needed for **Run Weekly Analysis** (sourcing keywords). The rest of the app never calls OpenAI.
+
+1. Sign in at <https://platform.openai.com/>.
+2. Add a payment method or prepaid credits under **Settings → Billing**. API usage is billed separately from ChatGPT subscriptions.
+3. Open **API keys** (<https://platform.openai.com/api-keys>) → **Create new secret key**, and copy it. It's shown only once.
+4. Put it in `.env` as `OPENAI_API_KEY=sk-...`.
+5. The model is set by `model` in `config.json` (default `gpt-5.4-mini`). Your account must have access to it.
+
+### 3. Google Gmail API: `secrets/gmail_client.json`
+
+Used to read Amazon order-confirmation emails (read-only) so each order's Amazon cost is filled in automatically. Gmail uses an **OAuth client file**, not an API key.
+
+1. **Create a project.** Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project (top bar → project picker → **New project**).
+2. **Enable the Gmail API.** Open **APIs & Services → Library**, search **Gmail API**, and click **Enable**.
+3. **Set up the consent screen.** Open **APIs & Services → OAuth consent screen** (or **Google Auth Platform**) and configure it:
+   - User type: **External**.
+   - App name and support email: anything, e.g. `dropship-manager` and your email.
+   - Under **Audience / Test users**, add the Gmail address that receives your Amazon confirmations.
+4. **Create the client.** Open **Credentials** (or **Clients**) → **Create credentials → OAuth client ID** and choose application type **Desktop app**. Download the JSON and save it as `secrets/gmail_client.json`; create the `secrets/` folder in the project root if needed.
+5. **Connect once.** Run:
+   ```bash
+   .venv/bin/python -m backend.integrations.gmail.auth
+   ```
+   - A browser window opens. Sign in with that Gmail account and allow read-only access.
+   - If Google shows "Google hasn't verified this app", choose **Advanced → Go to dropship-manager**. It's your own app.
+   - The token is saved to `data/gmail_token.json`.
+6. **Keep it from expiring.** While the consent screen's publishing status is **Testing**, Google expires the token every **7 days**. For unattended use, click **Publish app** so the status is **In production**; no verification is needed for personal use. Otherwise, re-run step 5 weekly.
+
+### Personal settings (optional)
+
+- **`config.local.json`** is a git-ignored file next to `config.json`. It holds private settings that override `config.json`. Example: to ignore Amazon orders shipped to yourself or family, create:
+  ```json
+  { "matching": { "personal_recipients": ["yourfirstname", "familymember"] } }
+  ```
+- For the rest of the setup (install, starting the backend and frontend, how the sync works), see **[docs/setup.md](docs/setup.md)**.
+
 ## Setup
 
 Requires Python 3.11+. Run commands from this project directory.
@@ -35,8 +105,9 @@ EBAY_ENVIRONMENT=production
 
 The refresh token must represent **your seller account**, with these consent scopes:
 
-- `https://api.ebay.com/oauth/api_scope` (Trading API)
-- `https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly`
+- `https://api.ebay.com/oauth/api_scope` (Trading and Browse APIs)
+- `https://api.ebay.com/oauth/api_scope/sell.fulfillment.readonly` (orders)
+- `https://api.ebay.com/oauth/api_scope/sell.finances` (payouts and fees)
 
 An application-only client-credentials token does not authorize seller downloads.
 Use production credentials for real listings; sandbox data is separate. Keep a separate
