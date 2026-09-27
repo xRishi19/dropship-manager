@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import Badge from "@/components/Badge";
 import { api, Expense, ExpenseInput, ExpensesResponse, money, OrderingFees } from "@/lib/api";
+import { useSyncRefresh } from "@/lib/sync";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -76,6 +77,7 @@ export default function ExpensesPage() {
     [],
   );
   useEffect(() => { load(); }, [load]);
+  useSyncRefresh(load); // Ordering-fee counts follow new orders.
 
   const mutate = async (path: string, init: RequestInit) => {
     setBusy(true);

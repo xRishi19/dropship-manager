@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, SyncStatus, timeAgo } from "@/lib/api";
+import { announceSync, syncSignature } from "@/lib/sync";
 
 const STEP_LABELS: Record<string, string> = {
   orders: "eBay orders",
@@ -20,15 +21,20 @@ export default function SyncIndicator() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [requested, setRequested] = useState<string | null>(null); // last_finished when Sync Now was clicked
+  const signature = useRef<string | null>(null);
+
+  const apply = useCallback((s: SyncStatus) => {
+    setStatus(s);
+    setError(null);
+    // Tell the open pages to reload once new sync results land (not on the first status after page load).
+    const next = syncSignature(s);
+    if (signature.current !== null && signature.current !== next) announceSync();
+    signature.current = next;
+  }, []);
 
   const load = useCallback(() => {
-    api<SyncStatus>("/sync/status")
-      .then((s) => {
-        setStatus(s);
-        setError(null);
-      })
-      .catch((e: Error) => setError(e.message));
-  }, []);
+    api<SyncStatus>("/sync/status").then(apply).catch((e: Error) => setError(e.message));
+  }, [apply]);
 
   useEffect(() => {
     load();
@@ -38,7 +44,7 @@ export default function SyncIndicator() {
 
   const syncNow = () => {
     setRequested(status?.loop.last_finished ?? "");
-    api<SyncStatus>("/sync/now", { method: "POST" }).then(setStatus).catch((e: Error) => setError(e.message));
+    api<SyncStatus>("/sync/now", { method: "POST" }).then(apply).catch((e: Error) => setError(e.message));
     setTimeout(load, 1500);
   };
   // Show "Syncing…" from the click until a newer cycle has finished.
@@ -46,11 +52,13 @@ export default function SyncIndicator() {
   useEffect(() => {
     if (requested !== null && !waiting) setRequested(null);
   }, [requested, waiting]);
+  // Poll faster while a cycle runs, so each step's results show up soon after it finishes.
+  const busy = waiting || !!status?.loop.running;
   useEffect(() => {
-    if (!waiting) return;
+    if (!busy) return;
     const timer = setInterval(load, 2000);
     return () => clearInterval(timer);
-  }, [waiting, load]);
+  }, [busy, load]);
 
   const failing = status ? Object.entries(status.steps).filter(([name, s]) => STEP_LABELS[name] && s.last_error) : [];
   const dot = error ? "warn" : status?.loop.running || waiting ? "busy" : failing.length ? "warn" : status?.loop.last_finished ? "ok" : "";

@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Badge from "@/components/Badge";
 import { api, dateTime, Email, money, OrderDetail, percent } from "@/lib/api";
+import { useSyncRefresh } from "@/lib/sync";
 
 const RETURN_OPTIONS = ["NONE", "RETURN_STARTED", "RETURN_COMPLETED", "RETURN_CANCELLED", "REFUNDED"];
 
@@ -21,6 +22,11 @@ export default function OrderDetailPanel({ orderId, onChanged }: { orderId: stri
   const loadEmails = useCallback(() =>
     api<Email[]>(`/orders/${encodeURIComponent(orderId)}/emails`).then(setEmails).catch((e: Error) => setError(e.message)),
   [orderId]);
+  // An open panel follows sync changes too (e.g. an Amazon cost matched from Gmail).
+  useSyncRefresh(() => {
+    load();
+    if (emails) loadEmails();
+  });
 
   /** Runs an order action; resolves true on success (errors are shown in the panel). */
   const act = async (path: string, init: RequestInit): Promise<boolean> => {

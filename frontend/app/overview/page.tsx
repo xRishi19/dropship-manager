@@ -5,6 +5,7 @@ import FinanceChart, { Metric, METRICS } from "@/components/overview/FinanceChar
 import OrdersTable from "@/components/overview/OrdersTable";
 import SummaryCards from "@/components/overview/SummaryCards";
 import { api, OrderSummary, Overview, query, RangeKey, RANGES } from "@/lib/api";
+import { useSyncRefresh } from "@/lib/sync";
 
 const STATUS_FILTERS = [
   { value: "", label: "All statuses" },
@@ -74,10 +75,7 @@ export default function OverviewPage() {
     return () => clearTimeout(timer);
   }, [load]);
 
-  useEffect(() => {
-    const timer = setInterval(load, 60000); // Pick up the background sync's new orders.
-    return () => clearInterval(timer);
-  }, [load]);
+  useSyncRefresh(load); // Pick up new orders and Amazon costs after every sync.
 
   const isMonth = MONTH.test(range);
   const openMonth = (month: string) => {
