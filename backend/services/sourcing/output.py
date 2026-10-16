@@ -14,6 +14,15 @@ NUMBER = re.compile(r'-?\d+(\.\d+)?')
 
 
 def atomic_write(path, text):
+    """Write UTF-8 text through a synced temporary file and atomically replace the destination.
+
+    Args:
+        path: Destination file path to atomically replace.
+        text: String content to encode as UTF-8 in the destination file.
+
+    Returns:
+        None; creates parent directories and removes a leftover temporary file on failure.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name)
@@ -29,6 +38,15 @@ def atomic_write(path, text):
 
 
 def csv_text(rows, fields):
+    """Serialize rows into CSV while JSON-encoding collections and escaping spreadsheet formulas.
+
+    Args:
+        rows: Iterable of row dictionaries; list/dict cells are encoded as JSON.
+        fields: Ordered CSV header/column names; extra row fields are ignored.
+
+    Returns:
+        CSV string with ordered headers; unknown extra columns are ignored.
+    """
     buffer = io.StringIO(newline='')
     writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction='ignore')
     writer.writeheader()
@@ -47,6 +65,17 @@ def csv_text(rows, fields):
 
 
 def export_analysis(directory, candidates, listings, diagnostics=None):
+    """Write candidate/listing CSV exports and optional analysis diagnostics atomically per file.
+
+    Args:
+        directory: Destination directory for exported sourcing artifacts.
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        listings: Listing dictionaries produced by shared ingestion or factual analysis.
+        diagnostics: Optional completed analysis-diagnostics dictionary to export; None omits the JSON artifact.
+
+    Returns:
+        None; creates export artifacts in the selected directory.
+    """
     directory = Path(directory)
     fields = list(candidates[0]) if candidates else ['keyword', 'total_units_sold', 'recent_units_sold']
     atomic_write(directory / 'keyword_candidates.csv', csv_text(candidates, fields))
@@ -57,11 +86,28 @@ def export_analysis(directory, candidates, listings, diagnostics=None):
 
 
 def export_week(directory, payload):
+    """Write weekly CSV/JSON and a Markdown report including selections, outcomes, diagnostics and coverage.
+
+    Args:
+        directory: Destination directory for exported sourcing artifacts.
+        payload: Complete saved weekly payload with results, candidates, listings, diagnostics, coverage and selection metadata.
+
+    Returns:
+        None; also regenerates the candidate/listing analysis exports.
+    """
     directory = Path(directory)
     export_analysis(directory, payload['candidates'], payload['listings'], payload.get('diagnostics'))
     atomic_write(directory / 'weekly_keywords.csv', csv_text(payload['results'], WEEKLY_FIELDS))
     atomic_write(directory / 'weekly_keywords.json', json.dumps(payload, indent=2, ensure_ascii=False))
     def clean(value):
+        """Escape Markdown table delimiters and collapse newlines in report cell values.
+
+        Args:
+            value: Report cell value; None becomes an empty string and other values are stringified.
+
+        Returns:
+            Safe single-line string, or an empty string for None.
+        """
         return '' if value is None else str(value).replace('|', '\\|').replace('\n', ' ')
     if payload.get('selection_method') == 'fallback':
         method = ['**GPT selection failed; these are the top deterministic Python scores per tier (no GPT review).**']

@@ -15,10 +15,27 @@ DATE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
 def local_today(request):
+    """Resolve today's calendar date in the configured accounting time zone.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+
+    Returns:
+        Local date object.
+    """
     return now().astimezone(local_zone(request.app.state.config.accounting.timezone)).date()
 
 
 def parse_date(value, field):
+    """Validate and normalize an expense date with a field-specific HTTP error.
+
+    Args:
+        value: Expense date text required in YYYY-MM-DD format; empty/invalid text raises HTTP 400.
+        field: Request field label to include in date-validation errors.
+
+    Returns:
+        ISO YYYY-MM-DD string; invalid values raise HTTPException 400.
+    """
     try:
         if not DATE.match(value or ''):
             raise ValueError
@@ -28,7 +45,16 @@ def parse_date(value, field):
 
 
 def validated(body):
-    """(name, amount_cents, start_date, recurring, end_date) or a 400."""
+    """Validate editable expense fields and convert the entered dollar amount to cents.
+
+    (name, amount_cents, start_date, recurring, end_date) or a 400.
+
+    Args:
+        body: ExpenseBody with name, dollar amount, first charge date, recurrence flag and optional ending date.
+
+    Returns:
+        Tuple (name, amount_cents, start_date, recurring, end_date); invalid fields raise HTTPException 400.
+    """
     name = body.name.strip()
     if not name:
         raise HTTPException(400, 'Name is required')
@@ -49,6 +75,16 @@ def validated(body):
 
 
 def one(request, db, expense_id):
+    """Load and serialize an expense with its next local-calendar occurrence.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        db: Open SQLite connection used for the query or write.
+        expense_id: Integer identifier of the stored expense.
+
+    Returns:
+        Expense dictionary; missing records raise HTTPException 404.
+    """
     row = service.get(db, expense_id)
     if row is None:
         raise HTTPException(404, 'Expense not found')
@@ -57,6 +93,15 @@ def one(request, db, expense_id):
 
 @router.get('/expenses')
 def list_expenses(request: Request, db=Depends(get_db)):
+    """Serve all expenses, monthly totals and informational ordering-provider fee summaries.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Expense-list response dictionary with ordering_fees attached.
+    """
     accounting = request.app.state.config.accounting
     today = local_today(request)
     result = service.list_expenses(db, today)
@@ -67,6 +112,16 @@ def list_expenses(request: Request, db=Depends(get_db)):
 
 @router.post('/expenses')
 def create_expense(request: Request, body: ExpenseBody, db=Depends(get_db)):
+    """Validate and commit a new expense, then return its serialized record.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        body: ExpenseBody with validated name, amount, date, recurrence and optional ending date.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Created expense dictionary including its identifier and next occurrence.
+    """
     fields = validated(body)
     with db:
         expense_id = service.create(db, *fields)
@@ -75,6 +130,17 @@ def create_expense(request: Request, body: ExpenseBody, db=Depends(get_db)):
 
 @router.put('/expenses/{expense_id}')
 def update_expense(expense_id: int, request: Request, body: ExpenseBody, db=Depends(get_db)):
+    """Validate and commit replacement expense fields for an existing record.
+
+    Args:
+        expense_id: Integer identifier of the stored expense.
+        request: FastAPI request providing application configuration and shared runtime services.
+        body: ExpenseBody replacing name, amount, date, recurrence and optional ending date.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Updated expense dictionary; missing identifiers raise HTTPException 404.
+    """
     fields = validated(body)
     with db:
         found = service.update(db, expense_id, *fields)
@@ -85,6 +151,15 @@ def update_expense(expense_id: int, request: Request, body: ExpenseBody, db=Depe
 
 @router.delete('/expenses/{expense_id}')
 def delete_expense(expense_id: int, db=Depends(get_db)):
+    """Commit deletion of an existing expense.
+
+    Args:
+        expense_id: Integer identifier of the stored expense.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Dictionary containing the deleted identifier; missing expenses raise HTTPException 404.
+    """
     with db:
         found = service.delete(db, expense_id)
     if not found:

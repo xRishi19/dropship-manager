@@ -12,9 +12,20 @@ router = APIRouter(tags=['overview'])
 
 
 def local_dates(start, end, zone):
-    """[start, end) as local dates, like order buckets, never past today: charges that haven't
+    """Convert dashboard timestamp bounds into local expense dates capped at tomorrow.
+
+    [start, end) as local dates, like order buckets, never past today: charges that haven't
     happened yet (e.g. later this month) don't reduce profit, so "Current Month" and picking the
-    current month from the month picker agree."""
+    current month from the month picker agree.
+
+    Args:
+        start: Optional inclusive ISO UTC range start; missing values leave the expense range unbounded below.
+        end: Optional exclusive ISO UTC range end; missing values use tomorrow in the accounting zone.
+        zone: Accounting time-zone object used for local calendar boundaries.
+
+    Returns:
+        Tuple (nullable first date, exclusive ending date), preventing future charges from reducing profit.
+    """
     tomorrow = now().astimezone(zone).date() + timedelta(days=1)
     first = parse_utc(start).astimezone(zone).date() if start else None
     after = min(parse_utc(end).astimezone(zone).date(), tomorrow) if end else tomorrow
@@ -23,6 +34,16 @@ def local_dates(start, end, zone):
 
 @router.get('/overview')
 def overview(request: Request, range: str = '30d', db=Depends(get_db)):
+    """Build dashboard financial cards and chart series with shared expenses reported separately.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        range: Dashboard preset, calendar month or all-time selector; defaults to 30d.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Dictionary with range bounds, timezone, granularity, cards and chart series.
+    """
     start, end, granularity, buckets, zone = resolve_range(request, range)
     accounting = request.app.state.config.accounting
     orders = load_orders(db, start, end, ordering_fee_cents=accounting.ordering_fee_cents)

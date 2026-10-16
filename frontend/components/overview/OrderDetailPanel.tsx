@@ -7,6 +7,13 @@ import { useSyncRefresh } from "@/lib/sync";
 
 const RETURN_OPTIONS = ["NONE", "RETURN_STARTED", "RETURN_COMPLETED", "RETURN_CANCELLED", "REFUNDED"];
 
+/**
+ * Render order metadata, financial calculations, shipping information, Amazon matching, manual costs, and return controls. Load details on mount and refresh open data after syncs or mutations.
+ *
+ * @param orderId - Backend order identifier to inspect.
+ * @param onChanged - Callback notifying the parent after an order action succeeds.
+ * @returns React detail panel, or a loading/error placeholder until the order is available.
+ */
 export default function OrderDetailPanel({ orderId, onChanged }: { orderId: string; onChanged: () => void }) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -14,11 +21,23 @@ export default function OrderDetailPanel({ orderId, onChanged }: { orderId: stri
   const [emails, setEmails] = useState<Email[] | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * Fetch the selected order’s latest details and display errors in the panel.
+   *
+   * @remarks Takes no arguments.
+   * @returns Nothing; schedules a request that sets order or error state.
+   */
   const load = useCallback(() => {
     api<OrderDetail>(`/orders/${encodeURIComponent(orderId)}`).then(setOrder).catch((e: Error) => setError(e.message));
   }, [orderId]);
   useEffect(load, [load]);
 
+  /**
+   * Fetch Amazon email confirmations in the selected order’s matching window for manual linking.
+   *
+   * @remarks Takes no arguments.
+   * @returns Promise resolving after email/error state updates; handled request failures do not reject.
+   */
   const loadEmails = useCallback(() =>
     api<Email[]>(`/orders/${encodeURIComponent(orderId)}/emails`).then(setEmails).catch((e: Error) => setError(e.message)),
   [orderId]);
@@ -28,7 +47,13 @@ export default function OrderDetailPanel({ orderId, onChanged }: { orderId: stri
     if (emails) loadEmails();
   });
 
-  /** Runs an order action; resolves true on success (errors are shown in the panel). */
+  /**
+   * Perform an order-relative mutation, replace details with the response, notify the parent, and refresh open email results. Display request errors and always clear busy state.
+   *
+   * @param path - Action suffix appended to the encoded order endpoint.
+   * @param init - Fetch settings including HTTP method and optional serialized body.
+   * @returns Promise resolving true on success or false when an error is handled in the panel.
+   */
   const act = async (path: string, init: RequestInit): Promise<boolean> => {
     setBusy(true);
     setError(null);
@@ -47,11 +72,30 @@ export default function OrderDetailPanel({ orderId, onChanged }: { orderId: stri
 
   if (!order) return <div className="muted small">{error ?? "Loading…"}</div>;
 
+  /**
+   * Save or clear the order’s manually entered Amazon cost and clear the cost input after success.
+   *
+   * @param value - Decimal amount text accepted by the backend, or null to clear the manual cost.
+   * @returns Promise resolving with no value after the action and any input reset.
+   */
   const saveCost = (value: string | null) =>
     act("/amazon-cost", { method: "POST", body: JSON.stringify({ amount: value }) }).then((ok) => { if (ok) setCost(""); });
+  /**
+   * Attach an Amazon email to the order, optionally moving an email already linked elsewhere.
+   *
+   * @param id - Gmail message identifier to match.
+   * @param replace - Whether an existing attachment may be replaced; defaults to false.
+   * @returns Promise resolving to the action’s success flag; errors are displayed in the panel.
+   */
   const link = (id: string, replace = false) =>
     act("/match", { method: "POST", body: JSON.stringify({ gmail_message_id: id, replace }) });
   const locked = order.match_status === "MATCHED" || order.match_status === "MANUAL";
+  /**
+   * Describe a signed order-to-email time offset, using whole days for date-only historical imports.
+   *
+   * @param m - Signed minute difference; nonnegative values mean the email arrived later.
+   * @returns Signed whole-day label for exact days of at least one day, otherwise rounded signed minutes.
+   */
   const signedMinutes = (m: number) => {
     const sign = m >= 0 ? "+" : "−";
     const days = Math.abs(m) / 1440;  // Amazon history imports have dates only.
@@ -59,6 +103,12 @@ export default function OrderDetailPanel({ orderId, onChanged }: { orderId: stri
   };
 
   const fees = Object.entries(order.other_fees ?? {});
+  /**
+   * Choose a financial display class for available signed profit values.
+   *
+   * @param cents - Signed profit in cents, or null when unavailable.
+   * @returns pos for zero/positive profit, neg for negative profit, or an empty class for null.
+   */
   const profitTone = (cents: number | null) => (cents === null ? "" : cents >= 0 ? "pos" : "neg");
 
   return (

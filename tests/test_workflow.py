@@ -15,6 +15,18 @@ PHRASES = ['jeep wrangler', 'toyota tacoma', 'garage door', 'pressure washer',
 
 
 def test_weekly_command_downloads_analyzes_selects_and_exports(tmp_path, monkeypatch):
+    """Regression check: weekly command downloads analyzes selects and exports.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     day = datetime.now(timezone.utc).date().isoformat()
     orders, listings = [], []
     for index, phrase in enumerate(PHRASES):
@@ -31,12 +43,39 @@ def test_weekly_command_downloads_analyzes_selects_and_exports(tmp_path, monkeyp
                                               'sku': item, 'quantity': quantity}]})
     class API:
         def raw_orders(self, *args):
+            """Provide synthetic eBay orders through the production-compatible download interface.
+
+            Args:
+                args: Positional arguments accepted for compatibility with the production callable being
+                    mocked.
+
+            Returns:
+                List of synthetic Fulfillment orders; recording backfill fakes return an empty list.
+            """
             return orders
         def listings(self, *args):
+            """Provide synthetic listing snapshots through the production-compatible eBay download interface.
+
+            Args:
+                args: Positional arguments accepted for compatibility with the production callable being
+                    mocked.
+
+            Returns:
+                List of synthetic listing dictionaries with sold counters and observation dates.
+            """
             return listings
     monkeypatch.setattr(main, 'sync', lambda db, cfg: sync(db, cfg, client=API()))
     model_calls = []
     def parse(**kwargs):
+        """Capture a mocked structured-model request and return a synthetic validated weekly selection response.
+
+        Args:
+            kwargs: Keyword arguments forwarded to the mocked callable or used to override synthetic
+                payload fields.
+
+        Returns:
+            SimpleNamespace with status completed and a Selection instance in output_parsed.
+        """
         model_calls.append(kwargs)
         data = json.loads(kwargs['input'][1]['content'])
         proven, explore = data['proven_candidates'], data['explore_candidates']
@@ -68,6 +107,20 @@ def test_weekly_command_downloads_analyzes_selects_and_exports(tmp_path, monkeyp
 
 
 def test_import_without_credentials_fails_cleanly(tmp_path, monkeypatch, caplog):
+    """Regression check: import without credentials fails cleanly.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+        caplog: Pytest log capture fixture used to inspect messages and ensure sensitive values
+            are absent.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     for key in ['EBAY_ACCESS_TOKEN', 'EBAY_REFRESH_TOKEN', 'EBAY_CLIENT_ID', 'EBAY_CLIENT_SECRET']:
         monkeypatch.delenv(key, raising=False)
     cfg = tmp_path / 'config.json'

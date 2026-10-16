@@ -5,6 +5,12 @@ import Badge from "@/components/Badge";
 import { dateTime, money, OrderSummary } from "@/lib/api";
 import OrderDetailPanel from "./OrderDetailPanel";
 
+/**
+ * Render an order’s profit, showing zero for excluded orders and an unknown-cost indicator when appropriate.
+ *
+ * @param order - Order summary containing exclusion, known-cost, and effective-profit fields.
+ * @returns React span with the formatted profit or its availability indicator.
+ */
 function ProfitCell({ order }: { order: OrderSummary }) {
   if (order.excluded) return <span className="muted">{money(0)}</span>;
   if (order.effective_profit_cents === null) {
@@ -13,6 +19,13 @@ function ProfitCell({ order }: { order: OrderSummary }) {
   return <span className={order.effective_profit_cents >= 0 ? "pos" : "neg"}>{money(order.effective_profit_cents)}</span>;
 }
 
+/**
+ * Render expandable order rows with profit, status, timestamps, and return state. Keep at most one detail panel open and forward changes to the parent refresh callback.
+ *
+ * @param orders - Order summaries for the current filtered view.
+ * @param onChanged - Callback invoked by the expanded detail panel after an order mutation.
+ * @returns React table with optional order details, or an empty-state element when no orders exist.
+ */
 export default function OrdersTable({ orders, onChanged }: { orders: OrderSummary[]; onChanged: () => void }) {
   const [open, setOpen] = useState<string | null>(null);
   if (!orders.length) return <div className="empty">No orders in this view.</div>;

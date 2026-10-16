@@ -17,6 +17,14 @@ NOW = ORDER_TIME + timedelta(hours=2)
 
 
 def at(minutes):
+    """Format a timestamp relative to the fixed reference order time.
+
+    Args:
+        minutes: Offset in minutes from the fixed reference order time.
+
+    Returns:
+        UTC ISO timestamp ending in Z after applying the supplied offset.
+    """
     return (ORDER_TIME + timedelta(minutes=minutes)).isoformat().replace('+00:00', 'Z')
 
 
@@ -24,10 +32,28 @@ ORDER = {'first_name': 'Jane', 'city': 'Springfield', 'state': 'IL', 'quantity':
 
 
 def email(minutes=5, **fields):
+    """Build matchable synthetic Amazon email facts near the reference order time and merge any field overrides.
+
+    Args:
+        minutes: Offset in minutes from the fixed reference order time.
+        fields: Overrides merged into the synthetic matchable email facts.
+
+    Returns:
+        Dictionary with recipient, location, quantity, and received_at fields.
+    """
     return {'first_name': 'Jane', 'city': 'Springfield', 'state': 'IL', 'quantity': 1, 'received_at': at(minutes), **fields}
 
 
 def test_normalization_handles_formatting_differences():
+    """Regression check: normalization handles formatting differences.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert norm_city('St. Louis') == norm_city('saint louis ') == 'saint louis'
     assert norm_city('Ft Worth') == 'fort worth'
     assert norm_state('Missouri') == norm_state('mo') == 'MO'
@@ -39,6 +65,15 @@ def test_normalization_handles_formatting_differences():
 
 
 def test_signals_are_transparent_and_time_proximity_counts():
+    """Regression check: signals are transparent and time proximity counts.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     close, late = score(ORDER, email(5), CFG), score(ORDER, email(20 * 60), CFG)
     assert set(close['signals']) == {'state', 'quantity', 'first_name', 'city', 'time'}
     assert close['score'] > late['score'] >= CFG.auto_match_score  # Both valid; closer is stronger.
@@ -48,34 +83,104 @@ def test_signals_are_transparent_and_time_proximity_counts():
 
 @pytest.mark.parametrize('minutes,eligible', [(-15, True), (-16, False), (24 * 60, True), (24 * 60 + 1, False)])
 def test_matching_window_boundaries(minutes, eligible):
+    """Regression check: matching window boundaries.
+
+    Args:
+        minutes: Offset in minutes from the fixed reference order time.
+        eligible: Expected candidate eligibility at the parametrized matching-window boundary.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert score(ORDER, email(minutes), CFG)['eligible'] is eligible
 
 
 def test_state_mismatch_is_never_a_candidate():
+    """Regression check: state mismatch is never a candidate.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     result = score(ORDER, email(5, state='Wisconsin'), CFG)
     assert not result['eligible'] and 'state' in result['reason']
 
 
 def seed(db, *orders):
+    """Commit the supplied synthetic eBay orders into the isolated database at the test's reference sync time.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        orders: Synthetic eBay order payloads to ingest into the isolated database.
+
+    Returns:
+        None. Ingests orders and their related item, sourcing, and financial rows.
+    """
     with db:
         store_orders(db, list(orders), NOW)
 
 
 def statuses(db):
+    """Read saved reconciliation statuses and email assignments for each order.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        Dictionary mapping order identifiers to (status, gmail_message_id) tuples.
+    """
     return {r['order_id']: (r['status'], r['gmail_message_id']) for r in db.execute('SELECT * FROM order_matches')}
 
 
 def updated_at(db, order_id):
+    """Read the most recent evaluation timestamp stored for one order match.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        order_id: Synthetic eBay or Amazon order identifier used to distinguish test records.
+
+    Returns:
+        ISO updated_at string from the selected order_matches row.
+    """
     return db.execute('SELECT updated_at FROM order_matches WHERE order_id=?', (order_id,)).fetchone()[0]
 
 
 def fetched(db, moment, *message_ids):
-    """When the sync cycle downloaded the emails (the factory stamps fetched_at = received_at)."""
+    """When the sync cycle downloaded the emails (the factory stamps fetched_at = received_at).
+
+    Adjust email fetched_at timestamps to simulate confirmations arriving in a later synchronization cycle.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        moment: Datetime used to stamp order or email records.
+        message_ids: Gmail record keys whose fetched_at timestamps are updated.
+
+    Returns:
+        None. Updates the selected purchase rows within the caller's transaction.
+    """
     db.executemany('UPDATE amazon_email_purchases SET fetched_at=? WHERE gmail_message_id=?',
                    [(now_iso(moment), m) for m in message_ids])
 
 
 def test_clear_candidate_auto_matches_and_sets_amazon_cost(db):
+    """Regression check: clear candidate auto matches and sets amazon cost.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)))
     with db:
         amazon_email(db, 'm1', at(4), total_cents=2750)
@@ -86,6 +191,16 @@ def test_clear_candidate_auto_matches_and_sets_amazon_cost(db):
 
 
 def test_ambiguous_candidates_need_review(db):
+    """Regression check: ambiguous candidates need review.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)))
     with db:
         amazon_email(db, 'm1', at(3))
@@ -99,6 +214,16 @@ def test_ambiguous_candidates_need_review(db):
 
 
 def test_one_email_cannot_back_two_identical_orders(db):
+    """Regression check: one email cannot back two identical orders.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)), ebay_order('B', created=at(1)))
     with db:
         amazon_email(db, 'm1', at(5))
@@ -107,6 +232,16 @@ def test_one_email_cannot_back_two_identical_orders(db):
 
 
 def test_unmatched_orders_stay_pending_and_retry_on_later_cycles(db):
+    """Regression check: unmatched orders stay pending and retry on later cycles.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)))
     with db:
         run_matching(db, CFG, NOW)
@@ -118,6 +253,16 @@ def test_unmatched_orders_stay_pending_and_retry_on_later_cycles(db):
 
 
 def test_recheck_window_ends_but_manual_recheck_still_works(db):
+    """Regression check: recheck window ends but manual recheck still works.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)), ebay_order('B', created=at(1)))
     with db:
         amazon_email(db, 'm1', at(5))
@@ -135,6 +280,16 @@ def test_recheck_window_ends_but_manual_recheck_still_works(db):
 def test_backfilled_order_is_matched_when_its_email_is_fetched_later(db):
     # History backfill (or Gmail disconnected): the order is first evaluated long after
     # recheck_hours, before its confirmation email has been downloaded.
+    """Regression check: backfilled order is matched when its email is fetched later.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)))
     backfill = ORDER_TIME + timedelta(days=30)
     with db:
@@ -149,6 +304,16 @@ def test_backfilled_order_is_matched_when_its_email_is_fetched_later(db):
 
 
 def test_old_order_is_rechecked_only_for_open_emails_in_its_window_fetched_since_its_evaluation(db):
+    """Regression check: old order is rechecked only for open emails in its window fetched since its evaluation.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)))
     cycle = ORDER_TIME + timedelta(days=30)
     with db:
@@ -173,6 +338,16 @@ def test_old_order_is_rechecked_only_for_open_emails_in_its_window_fetched_since
 
 def test_contested_email_stays_in_review_when_only_one_contender_is_evaluated(db):
     # Same buyer, two orders 20 minutes apart, one Amazon email 5 minutes after the second.
+    """Regression check: contested email stays in review when only one contender is evaluated.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)), ebay_order('B', created=at(20)))
     with db:
         amazon_email(db, 'm1', at(25))
@@ -194,6 +369,18 @@ def test_contested_email_stays_in_review_when_only_one_contender_is_evaluated(db
 
 
 def test_manual_links_made_while_the_matcher_runs_are_kept(db, monkeypatch):
+    """Regression check: manual links made while the matcher runs are kept.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)), ebay_order('B', created=at(0), name='Bob', city='Peoria'),
          ebay_order('C', created=at(0), name='Carl', city='Peoria'))
     with db:
@@ -205,6 +392,16 @@ def test_manual_links_made_while_the_matcher_runs_are_kept(db, monkeypatch):
     save, raced = matcher.save_evaluation, []
 
     def user_acts_between_reads_and_write(*args):
+        """Inject manual email assignments before the matcher saves its first result, then delegate to the original save function.
+
+        Args:
+            args: Positional arguments accepted for compatibility with the production callable being
+                mocked.
+
+        Returns:
+            Boolean returned by the original save_evaluation indicating whether the automatic write
+            succeeded.
+        """
         if not raced:
             raced.append(True)
             manual.link_email(db, 'A', 'm2', NOW)  # The matcher is about to save A as NEEDS_REVIEW.
@@ -224,6 +421,16 @@ def test_manual_links_made_while_the_matcher_runs_are_kept(db, monkeypatch):
 
 
 def test_manual_cost_link_and_unlink_are_never_overwritten(db):
+    """Regression check: manual cost link and unlink are never overwritten.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)), ebay_order('B', created=at(0), name='Bob', city='Peoria'))
     with db:
         amazon_email(db, 'm1', at(5))
@@ -247,6 +454,16 @@ def test_manual_cost_link_and_unlink_are_never_overwritten(db):
 
 
 def test_linking_an_email_held_by_another_order_requires_replace(db):
+    """Regression check: linking an email held by another order requires replace.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created=at(0)), ebay_order('B', created=at(0)))
     with db:
         amazon_email(db, 'm1', at(5))
@@ -256,6 +473,15 @@ def test_linking_an_email_held_by_another_order_requires_replace(db):
 
 
 def test_accents_and_case_do_not_break_name_or_city_matches():
+    """Regression check: accents and case do not break name or city matches.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     result = score({**ORDER, 'first_name': 'Jose', 'city': 'San Jose', 'state': 'CA'},
                    email(first_name='José', city='SAN JOSÉ', state='CA'), CFG)
     assert result['signals']['first_name']['points'] == CFG.first_name_match
@@ -263,6 +489,16 @@ def test_accents_and_case_do_not_break_name_or_city_matches():
 
 
 def test_old_pending_orders_are_rechecked_when_a_stored_email_is_reparsed(db):
+    """Regression check: old pending orders are rechecked when a stored email is reparsed.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     from backend.services.sync.orchestrator import reparse_emails
     seed(db, ebay_order('A', created=at(0), name='Jordan Doe', city='Spokane', state='WA'))
     later = ORDER_TIME + timedelta(days=5)

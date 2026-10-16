@@ -3,6 +3,15 @@
 import Badge from "@/components/Badge";
 import { HistoryEntry, Outcome } from "@/lib/api";
 
+/**
+ * Render saved keyword selections alongside later listing outcomes and Explore cooldown information. Match outcomes by their week and keyword.
+ *
+ * @param entries - Historical saved keyword-selection rows.
+ * @param outcomes - Per-week listing and sales outcomes associated with keywords.
+ * @param restingNow - Keywords currently in the Explore cooldown period.
+ * @param cooldown - Number of weeks an Explore keyword rests after selection.
+ * @returns React fragment containing cooldown guidance and the history table, or an empty-state element.
+ */
 export default function History({ entries, outcomes, restingNow, cooldown }:
   { entries: HistoryEntry[]; outcomes: Outcome[]; restingNow: string[]; cooldown: number }) {
   const results = new Map<string, Outcome["keywords"][number]>();

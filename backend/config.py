@@ -104,7 +104,15 @@ class Config(StrictModel):
 
 
 def merge(base, override):
-    """Nested dict merge: override's values win, sections merge key by key."""
+    """Merge nested dictionaries recursively; override values win and sections merge key by key.
+
+    Args:
+        base: Base configuration dictionary, copied rather than modified.
+        override: Dictionary whose scalar values and nested keys override the base.
+
+    Returns:
+        New merged dictionary; untouched nested values may still reference the input objects.
+    """
     result = dict(base)
     for key, value in override.items():
         result[key] = merge(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else value
@@ -112,8 +120,14 @@ def merge(base, override):
 
 
 def load_config(path: str) -> Config:
-    """config.json, plus an optional sibling config.local.json (git-ignored) holding personal
-    settings such as matching.personal_recipients, which is never shared."""
+    """Read and validate configuration, merging an optional sibling config.local.json for personal settings that are never shared.
+
+    Args:
+        path: Configuration JSON filename; the local override uses the same stem plus .local.
+
+    Returns:
+        Validated Config model. JSON, filesystem, and Pydantic validation failures propagate to the caller.
+    """
     path = Path(path)
     data = json.loads(path.read_text())
     local = path.with_name(path.stem + '.local' + path.suffix)

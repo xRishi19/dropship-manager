@@ -9,6 +9,15 @@ from backend.services.sourcing.output import csv_text
 
 
 def test_oauth_consent_scopes_and_state():
+    """Regression check: OAuth consent scopes and state.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     url = authorization_url('client', 'ru-name', 'random-state')
     query = parse_qs(urlparse(url).query)
     assert query['state'] == ['random-state']
@@ -20,6 +29,15 @@ def test_oauth_consent_scopes_and_state():
 
 
 def test_spreadsheet_formula_escaping_preserves_numeric_units():
+    """Regression check: spreadsheet formula escaping preserves numeric units.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     output = csv_text([{'title': '=HYPERLINK("bad")', 'units': 20}], ['title', 'units'])
     row = list(csv.DictReader(io.StringIO(output)))[0]
     assert row['title'].startswith("'=")

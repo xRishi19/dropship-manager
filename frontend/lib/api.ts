@@ -213,6 +213,13 @@ export type SyncStatus = {
   accounting_start: string;
 };
 
+/**
+ * Request JSON from the proxied FastAPI backend with caching disabled and JSON content headers. Backend error details become thrown Errors; fetch and JSON decoding failures propagate.
+ *
+ * @param path - Backend path relative to /api, including any query string.
+ * @param init - Optional fetch settings, such as method, headers, and serialized body.
+ * @returns Promise resolving to the decoded response typed as T; rejects on failed requests.
+ */
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...init,
@@ -234,19 +241,43 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
+/**
+ * Format a monetary value stored in cents as US dollars.
+ *
+ * @param cents - Signed cents, or null/undefined when the amount is unavailable.
+ * @returns Currency text with two decimal places, or an em dash for a missing value.
+ */
 export function money(cents: number | null | undefined): string {
   return cents === null || cents === undefined ? "—" : usd.format(cents / 100);
 }
 
+/**
+ * Format a fractional ratio as a percentage for dashboard displays.
+ *
+ * @param value - Fractional ratio (0.125 means 12.5%), or null/undefined.
+ * @returns Percentage text rounded to one decimal place, or an em dash when missing.
+ */
 export function percent(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : `${(value * 100).toFixed(1)}%`;
 }
 
+/**
+ * Format an order or email timestamp in the browser’s local timezone.
+ *
+ * @param iso - Date/time string understood by Date, or null/undefined.
+ * @returns Localized US month, day, year, and time text, or an em dash when missing.
+ */
 export function dateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+/**
+ * Describe elapsed time since a timestamp, clamping future timestamps to zero seconds.
+ *
+ * @param iso - Date/time string understood by Date, or null/undefined.
+ * @returns Rounded seconds/minutes/hours/days followed by “ago”, or “never” when missing.
+ */
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "never";
   const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
@@ -256,6 +287,12 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${Math.round(seconds / 86400)}d ago`;
 }
 
+/**
+ * Encode request filters as a URL query string, omitting absent and empty values.
+ *
+ * @param params - Mapping of query names to string/number values; null, undefined, and empty strings are omitted.
+ * @returns A percent-encoded query prefixed with ?, or an empty string when no values remain.
+ */
 export function query(params: Record<string, string | number | null | undefined>): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {

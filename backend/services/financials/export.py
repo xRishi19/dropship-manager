@@ -12,10 +12,26 @@ EXPORT_FIELDS = [
 
 
 def dollars(value):
+    """Format an integer-cent amount for a monetary CSV cell.
+
+    Args:
+        value: Monetary amount in integer cents, or None for an empty CSV cell.
+
+    Returns:
+        Two-decimal amount string, or an empty string for an unknown value.
+    """
     return '' if value is None else f'{value / 100:.2f}'
 
 
 def export_rows(orders):
+    """Convert enriched ledger orders into accounting export columns, including excluded orders.
+
+    Args:
+        orders: Iterable of enriched ledger orders with items, financials, status and buyer fields.
+
+    Yields:
+        One export-row dictionary per order with money formatted as decimal strings.
+    """
     for order in orders:
         yield {
             'sale_date': order['created_at'], 'product_title': order['product_title'],
@@ -46,5 +62,14 @@ def export_rows(orders):
 
 
 def export_csv(orders):
-    """Spreadsheet-safe CSV (formula-like text is escaped, as in the sourcing exports)."""
+    """Render accounting rows as spreadsheet-safe CSV with the fixed tax/export column order.
+
+    Spreadsheet-safe CSV (formula-like text is escaped, as in the sourcing exports).
+
+    Args:
+        orders: Iterable of enriched ledger orders to include in the accounting CSV.
+
+    Returns:
+        CSV string including a header and escaped formula-like text cells.
+    """
     return csv_text(list(export_rows(orders)), EXPORT_FIELDS)

@@ -11,6 +11,14 @@ MONTH = re.compile(r'\d{4}-\d{2}')
 
 
 def get_db(request: Request):
+    """Open a request-scoped database connection using application configuration and close it after use.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+
+    Yields:
+        SQLite connection; teardown always closes it without performing migrations.
+    """
     db = connect(request.app.state.config.database, migrate=False)
     try:
         yield db
@@ -19,11 +27,29 @@ def get_db(request: Request):
 
 
 def now():
+    """Get the current UTC time for API range and manual-action timestamps.
+
+    Args:
+        None.
+
+    Returns:
+        Timezone-aware UTC datetime.
+    """
     return datetime.now(timezone.utc)
 
 
 def resolve_range(request, range_name):
-    """(start_utc, end_utc, granularity, buckets, zone) for a dashboard range; 'all' = no bounds."""
+    """Validate a dashboard range and resolve it using the configured local time zone.
+
+    (start_utc, end_utc, granularity, buckets, zone) for a dashboard range; 'all' = no bounds.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        range_name: Dashboard preset, past/current YYYY-MM, or all; None/empty/all selects unbounded history.
+
+    Returns:
+        Tuple (start UTC ISO, end UTC ISO, granularity, buckets, zone); all yields unbounded None values.
+    """
     zone = local_zone(request.app.state.config.accounting.timezone)
     if range_name in (None, '', 'all'):
         return None, None, None, None, zone

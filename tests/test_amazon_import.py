@@ -15,6 +15,15 @@ FIELDS = ['order id', 'order url', 'items', 'to', 'date', 'total', 'shipping', '
 
 
 def write_csv(path, rows):
+    """Write Amazon history fixture rows with the expected column names, filling missing cells with empty strings.
+
+    Args:
+        path: Destination path for the synthetic CSV file.
+        rows: Row dictionaries to serialize using the Amazon history CSV fixture columns.
+
+    Returns:
+        The supplied path after the UTF-8 CSV file has been written.
+    """
     with open(path, 'w', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, FIELDS)
         writer.writeheader()
@@ -24,10 +33,34 @@ def write_csv(path, rows):
 
 
 def amazon(order_id, items, day, total, to='Alex Buyer', refund=''):
+    """Build a single Amazon history CSV row with recipient, order date, cost, refund, and item text.
+
+    Args:
+        order_id: Synthetic eBay or Amazon order identifier used to distinguish test records.
+        items: Product-description text from the Amazon history export; the helper appends a
+            trailing delimiter.
+        day: Order-date cell value used in the Amazon history CSV row.
+        total: Purchase-total cell value written into the history row.
+        to: Synthetic recipient name written into the Amazon history CSV row.
+        refund: Refund cell value written into the Amazon history CSV row.
+
+    Returns:
+        Dictionary keyed by the Amazon export column names.
+    """
     return {'order id': order_id, 'items': items + '; ', 'to': to, 'date': day, 'total': total, 'refund': refund}
 
 
 def test_personal_orders_summary_rows_and_blanks_are_skipped(tmp_path):
+    """Regression check: personal orders summary rows and blanks are skipped.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = write_csv(tmp_path / 'a.csv', [
         amazon('111-1', 'Lug Nuts 20pc', '2026-03-01', '12.50'),
         amazon('111-2', 'Vitamins', '2026-03-01', '9.00', to='Pat Owner'),
@@ -41,11 +74,33 @@ def test_personal_orders_summary_rows_and_blanks_are_skipped(tmp_path):
 
 
 def seed(db, *orders):
+    """Commit the supplied synthetic eBay orders into the isolated database at the test's reference sync time.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        orders: Synthetic eBay order payloads to ingest into the isolated database.
+
+    Returns:
+        None. Ingests orders and their related item, sourcing, and financial rows.
+    """
     with db:
         store_orders(db, list(orders), NOW)
 
 
 def test_title_and_date_match_old_nameless_orders_and_apply_sets_cost(db, tmp_path):
+    """Regression check: title and date match old nameless orders and apply sets cost.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created='2026-03-01T15:00:00.000Z', name=None,
                         items=[('1', 'GE RTV108 Silicone Sealant OEM Replacement WB01X46528', 1, '')]),
          ebay_order('B', created='2026-03-01T16:00:00.000Z', name=None,
@@ -66,6 +121,18 @@ def test_title_and_date_match_old_nameless_orders_and_apply_sets_cost(db, tmp_pa
 
 
 def test_ambiguous_brand_conflicts_and_settled_orders_are_left_for_review(db, tmp_path):
+    """Regression check: ambiguous brand conflicts and settled orders are left for review.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created='2026-03-01T15:00:00.000Z', name=None,
                         items=[('1', 'EZclicker Big Button Universal TV Remote Control for All TVs', 1, '')]),
          ebay_order('B', created='2026-03-01T15:00:00.000Z', name=None,
@@ -92,6 +159,18 @@ def test_ambiguous_brand_conflicts_and_settled_orders_are_left_for_review(db, tm
 
 
 def test_a_different_recipient_name_rules_out_a_candidate(db, tmp_path):
+    """Regression check: a different recipient name rules out a candidate.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', created='2026-07-01T15:00:00.000Z', name='Jamie Fox',
                         items=[('1', 'Emraw No 2 HB Translucent Pencils Multipoint', 1, '')]))
     path = write_csv(tmp_path / 'a.csv', [

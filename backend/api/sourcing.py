@@ -21,11 +21,29 @@ HEAVY = {'listings', 'candidates', 'config'}
 
 
 def today():
+    """Get the current UTC calendar day used for sourcing analysis.
+
+    Args:
+        None.
+
+    Returns:
+        ISO YYYY-MM-DD string.
+    """
     return datetime.now(timezone.utc).date().isoformat()
 
 
 def candidates(request, db):
-    """analyze() over the shared DB, cached until the underlying data changes. No OpenAI."""
+    """Compute factual sourcing candidates and cache them until observed data or the analysis day changes.
+
+    analyze() over the shared DB, cached until the underlying data changes. No OpenAI.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Tuple (candidate dictionaries, diagnostics dictionary); never invokes OpenAI.
+    """
     key = tuple(db.execute('''SELECT (SELECT max(synced_at) FROM orders), (SELECT count(*) FROM sales),
             (SELECT sum(quantity) FROM sales), (SELECT max(observed_date) FROM snapshots)''').fetchone()) + (today(),)
     cache = request.app.state.candidate_cache
@@ -37,11 +55,28 @@ def candidates(request, db):
 
 
 def weeks(db):
+    """Load all saved weekly selection payloads in chronological order.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        List of decoded payload dictionaries.
+    """
     return [json.loads(r['payload']) for r in db.execute('SELECT payload FROM weeks ORDER BY week')]
 
 
 @router.get('/sourcing/week')
 def current_week(week: str | None = None, db=Depends(get_db)):
+    """Serve a requested or latest saved weekly schedule with factual per-keyword statistics.
+
+    Args:
+        week: Optional saved ISO Monday week; None selects the latest saved payload.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Weekly response dictionary, or an empty week/results response when no selections exist.
+    """
     saved = weeks(db)
     if not saved:
         return {'week': None, 'results': []}
@@ -62,12 +97,30 @@ def current_week(week: str | None = None, db=Depends(get_db)):
 
 @router.get('/sourcing/candidates')
 def candidate_pool(request: Request, db=Depends(get_db)):
+    """Serve the current factual candidate pool and its filter diagnostics.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Dictionary containing as_of, candidates and diagnostics.
+    """
     rows, diagnostics = candidates(request, db)
     return {'as_of': today(), 'candidates': rows, 'diagnostics': diagnostics}
 
 
 @router.get('/sourcing/history')
 def keyword_history(request: Request, db=Depends(get_db)):
+    """Combine saved selections, explore cooldown state and live title-attributed outcomes.
+
+    Args:
+        request: FastAPI request providing application configuration and shared runtime services.
+        db: Open SQLite connection used for the query or write.
+
+    Returns:
+        Dictionary containing reverse-chronological entries, resting keywords, outcomes and cooldown length.
+    """
     config = request.app.state.config
     saved = weeks(db)
     this_week = week_of(today())
@@ -105,6 +158,15 @@ def keyword_history(request: Request, db=Depends(get_db)):
 
 @router.post('/sourcing/weekly/run')
 def run_weekly(body: RunBody, request: Request):
+    """Require explicit OpenAI-spend confirmation and launch a single background weekly-generation job.
+
+    Args:
+        body: RunBody with explicit OpenAI-spend confirmation and optional listing-refresh request.
+        request: FastAPI request providing application configuration and shared runtime services.
+
+    Returns:
+        Registered job dictionary; absent confirmation/API credentials produce HTTPException 400.
+    """
     if not body.confirm:
         raise HTTPException(400, 'Confirm the run: it calls the OpenAI API')
     if not os.getenv('OPENAI_API_KEY'):
@@ -113,6 +175,14 @@ def run_weekly(body: RunBody, request: Request):
     cache = request.app.state.candidate_cache
 
     def job(state):
+        """Run weekly sourcing with its own database/eBay clients and optionally refresh listings first.
+
+        Args:
+            state: Mutable registered job dictionary whose step text tracks progress.
+
+        Returns:
+            Dictionary containing generated week and selection_method; always closes owned clients/connections.
+        """
         db = connect(config.database, migrate=False)
         api = EbayClient(config.ebay)  # Separate client: the sync loop keeps its own.
         try:

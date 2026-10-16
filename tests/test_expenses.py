@@ -17,10 +17,29 @@ D = date.fromisoformat
 
 
 def expense(start, recurring=False, end=None):
+    """Build the minimal expense recurrence fields used by date-scheduling tests.
+
+    Args:
+        start: ISO calendar date on which the expense first occurs.
+        recurring: Whether the synthetic expense repeats on its monthly anniversary.
+        end: Optional inclusive final occurrence date; None allows recurrence to continue.
+
+    Returns:
+        Dictionary with start_date, recurring, and optional end_date.
+    """
     return {'start_date': start, 'recurring': recurring, 'end_date': end}
 
 
 def test_one_time_in_and_out_of_range():
+    """Regression check: one time in and out of range.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     item = expense('2026-03-15')
     assert occurrences(item, D('2026-03-01'), D('2026-04-01')) == [D('2026-03-15')]
     assert occurrences(item, D('2026-03-16'), D('2026-04-01')) == []
@@ -29,6 +48,15 @@ def test_one_time_in_and_out_of_range():
 
 
 def test_recurring_clamps_to_short_months_and_leap_years():
+    """Regression check: recurring clamps to short months and leap years.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     item = expense('2026-01-31', recurring=True)
     assert occurrences(item, D('2026-01-01'), D('2026-05-01')) == [
         D('2026-01-31'), D('2026-02-28'), D('2026-03-31'), D('2026-04-30')]
@@ -38,6 +66,15 @@ def test_recurring_clamps_to_short_months_and_leap_years():
 
 
 def test_end_date_stops_recurring_inclusive():
+    """Regression check: end date stops recurring inclusive.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     item = expense('2026-01-15', recurring=True, end='2026-03-15')
     assert occurrences(item, D('2026-01-01'), D('2026-12-31')) == [D('2026-01-15'), D('2026-02-15'), D('2026-03-15')]
     stopped = expense('2026-01-15', recurring=True, end='2026-03-14')
@@ -46,6 +83,15 @@ def test_end_date_stops_recurring_inclusive():
 
 
 def test_recurring_starting_mid_range_and_range_starting_mid_month():
+    """Regression check: recurring starting mid range and range starting mid month.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     item = expense('2026-03-20', recurring=True)
     assert occurrences(item, D('2026-03-01'), D('2026-06-01')) == [D('2026-03-20'), D('2026-04-20'), D('2026-05-20')]
     assert occurrences(item, D('2026-04-21'), D('2026-05-21')) == [D('2026-05-20')]
@@ -55,6 +101,16 @@ def test_recurring_starting_mid_range_and_range_starting_mid_month():
 
 
 def test_all_range_counts_every_occurrence_through_today(db):
+    """Regression check: all range counts every occurrence through today.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         create(db, 'Setup', 5000, '2025-11-10', False, None)
         create(db, 'Software', 1000, '2026-01-31', True, None)
@@ -65,6 +121,15 @@ def test_all_range_counts_every_occurrence_through_today(db):
 
 
 def test_next_occurrence():
+    """Regression check: next occurrence.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert next_occurrence(expense('2026-01-31', recurring=True), D('2026-02-10')) == D('2026-02-28')
     assert next_occurrence(expense('2026-01-31', recurring=True), D('2026-03-01')) == D('2026-03-31')
     assert next_occurrence(expense('2026-01-15', recurring=True, end='2026-02-20'), D('2026-02-16')) is None
@@ -75,6 +140,17 @@ def test_next_occurrence():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    """Construct an eBay client using this callable fake as its HTTP transport.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Yields:
+        EbayClient instance backed by an HTTPX MockTransport.
+    """
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     config = json.loads(open('config.json').read())
     config.update(database=str(tmp_path / 'app.sqlite3'), output_dir=str(tmp_path / 'output'))
@@ -94,6 +170,16 @@ def client(tmp_path, monkeypatch):
 
 
 def test_crud_through_the_api(client):
+    """Regression check: crud through the API.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     today = client.today
     empty = client.get('/api/expenses').json()
     empty.pop('ordering_fees')
@@ -138,12 +224,34 @@ def test_crud_through_the_api(client):
     {'name': 'x', 'amount': '5', 'date': '2026-03-01', 'end_date': 'soon'},
 ])
 def test_validation_returns_400(client, body):
+    """Regression check: validation returns 400.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+        body: Synthetic HTTP, email, or API request payload used to exercise the current test
+            case.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert client.post('/api/expenses', json=body).status_code == 400
     made = client.post('/api/expenses', json={'name': 'ok', 'amount': '1', 'date': '2026-01-01'}).json()
     assert client.put(f'/api/expenses/{made["id"]}', json=body).status_code == 400
 
 
 def test_overview_cards_subtract_expenses_only_from_profit_after(client):
+    """Regression check: overview cards subtract expenses only from profit after.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     client.post('/api/orders/A/amazon-cost', json={'amount': '20.00'})
     before = client.get('/api/overview?range=30d').json()['cards']
     assert before['expenses_cents'] == 0 and before['profit_after_expenses_cents'] == before['profit_cents']
@@ -162,6 +270,18 @@ def test_overview_cards_subtract_expenses_only_from_profit_after(client):
 
 
 def test_migration_adds_expenses_to_an_old_database_with_a_backup(tmp_path, monkeypatch):
+    """Regression check: migration adds expenses to an old database with a backup.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'app.sqlite3'
     monkeypatch.setattr(connection, 'MIGRATIONS', connection.MIGRATIONS[:2])
     old = connect(str(path))
@@ -171,7 +291,7 @@ def test_migration_adds_expenses_to_an_old_database_with_a_backup(tmp_path, monk
     assert not (tmp_path / 'backups').exists()
     monkeypatch.undo()
     db = connect(str(path))
-    assert [r[0] for r in db.execute('SELECT version FROM schema_migrations')] == [1, 2, 3]
+    assert [r[0] for r in db.execute('SELECT version FROM schema_migrations')] == [1, 2, 3, 4]
     assert db.execute('SELECT count(*) FROM expenses').fetchone()[0] == 0
     assert db.execute('SELECT count(*) FROM weeks').fetchone()[0] == 1
     backups = list((tmp_path / 'backups').iterdir())
@@ -185,7 +305,20 @@ def test_migration_adds_expenses_to_an_old_database_with_a_backup(tmp_path, monk
 
 
 def test_current_month_from_picker_and_current_month_button_agree(tmp_path, monkeypatch):
-    """Future charges later this month never reduce profit, however the month is selected."""
+    """Future charges later this month never reduce profit, however the month is selected.
+
+    Verify that current month from picker and current month button agree.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     import json
     from datetime import date, datetime, timezone
 
@@ -213,6 +346,16 @@ def test_current_month_from_picker_and_current_month_button_agree(tmp_path, monk
 
 
 def add_orders(client, orders):
+    """Commit additional synthetic orders to the database owned by the API test client.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+        orders: Synthetic eBay order payloads to ingest into the isolated database.
+
+    Returns:
+        None. Updates the client application's database and closes the helper connection.
+    """
     db = connect(client.app.state.config.database)
     with db:
         store_orders(db, orders, datetime.now(timezone.utc))
@@ -220,6 +363,16 @@ def add_orders(client, orders):
 
 
 def test_ordering_fees_count_every_order_including_cancelled(client):
+    """Regression check: ordering fees count every order including cancelled.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     stamp = lambda moment: moment.replace(microsecond=0).isoformat().replace('+00:00', 'Z')
     now = datetime.now(timezone.utc)
     last_year = datetime(client.today.year - 1, 7, 1, 17, tzinfo=timezone.utc)
@@ -232,6 +385,16 @@ def test_ordering_fees_count_every_order_including_cancelled(client):
 
 
 def test_ordering_fees_never_change_expenses_or_profit_after_expenses(client):
+    """Regression check: ordering fees never change expenses or profit after expenses.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     client.post('/api/orders/A/amazon-cost', json={'amount': '20.00'})
     created = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
     add_orders(client, [ebay_order('C', created=created, cancelled=True)])

@@ -29,10 +29,26 @@ ASIN = re.compile(r'[A-Z0-9]{10}')
 
 
 def header(value):
+    """Normalize a report header or title to lowercase alphanumeric words separated by single spaces.
+
+    Args:
+        value: Value converted to text before punctuation and whitespace normalization.
+
+    Returns:
+        Normalized string, possibly empty.
+    """
     return re.sub(r'[^a-z0-9]+', ' ', str(value).strip().lower()).strip()
 
 
 def day(value) -> str:
+    """Convert supported dates and report date strings into a calendar date, converting aware datetimes to UTC first.
+
+    Args:
+        value: Date, datetime, ISO timestamp, or supported month/day report date string.
+
+    Returns:
+        ISO YYYY-MM-DD string. Raises ValueError for unsupported dates.
+    """
     if isinstance(value, datetime):
         if value.tzinfo:
             value = value.astimezone(timezone.utc)
@@ -52,6 +68,14 @@ def day(value) -> str:
 
 
 def integer(value) -> int:
+    """Validate a report count as a nonnegative whole number without accepting signs or decimal notation.
+
+    Args:
+        value: Report cell converted to stripped text for digit validation.
+
+    Returns:
+        Nonnegative int; raises ValueError when the cell is not all digits.
+    """
     text = str(value).strip()
     if not re.fullmatch(r'\d+', text):
         raise ValueError(f'Expected nonnegative integer, got {text!r}')
@@ -59,6 +83,14 @@ def integer(value) -> int:
 
 
 def identifier(value) -> str:
+    """Validate a nonempty textual identifier while rejecting float cells and scientific notation that can corrupt IDs.
+
+    Args:
+        value: Identifier cell, normally a string or integer.
+
+    Returns:
+        Stripped identifier string; raises ValueError for missing or unsafe identifiers.
+    """
     if isinstance(value, float):
         raise ValueError('Identifiers must be text, not floating point Excel cells')
     text = str(value).strip()
@@ -68,6 +100,16 @@ def identifier(value) -> str:
 
 
 def normalize(row, kind, snapshot_date=None):
+    """Validate and translate a mapped report row into a canonical order-line or listing-snapshot record; cancelled order quantities become zero.
+
+    Args:
+        row: Dictionary using canonical field names for one report row.
+        kind: orders for order-line fields; other values use listing-snapshot fields.
+        snapshot_date: Optional fallback observation date for listing rows without one.
+
+    Returns:
+        Canonical row dictionary with validated identifiers, ISO dates, and integer quantities. Raises ValueError for invalid required cells.
+    """
     item = identifier(row.get('item_id', ''))
     title = str(row.get('title', '')).strip()
     if not title:
@@ -90,6 +132,17 @@ def normalize(row, kind, snapshot_date=None):
 
 
 def read_report(path, kind='auto', snapshot_date=None, mapping=None):
+    """Read CSV or XLSX data, locate and validate mapped column headers, skip blank rows, and normalize each data row.
+
+    Args:
+        path: Report filename or Path; .xlsx selects the workbook reader.
+        kind: orders, listings, or auto to infer the kind from order_id headers.
+        snapshot_date: Optional default observation date for listing snapshots.
+        mapping: Optional internal-field to external-column mapping overriding standard aliases.
+
+    Returns:
+        Tuple of detected kind and normalized row list. Invalid headers or cells raise ValueError with report context.
+    """
     path = Path(path)
     if path.suffix.lower() == '.xlsx':
         from openpyxl import load_workbook
@@ -130,6 +183,14 @@ def read_report(path, kind='auto', snapshot_date=None, mapping=None):
 
 
 def asin_from_sku(sku):
+    """Decode an Amazon ASIN from the supported hexadecimal-prefix/base64 SKU format.
+
+    Args:
+        sku: Encoded sourcing SKU, or a falsey value when no SKU exists.
+
+    Returns:
+        Validated ten-character ASIN string, or None when the format or decoding is invalid.
+    """
     match = SKU_ASIN.fullmatch(sku or '')
     if not match:
         return None
@@ -142,6 +203,14 @@ def asin_from_sku(sku):
 
 
 def product_key(row):
+    """Choose a cross-listing product identity, preferring an encoded ASIN over SKU and normalized title.
+
+    Args:
+        row: Canonical row containing title and optionally sku.
+
+    Returns:
+        Identity string prefixed with asin:, sku:, or title:.
+    """
     asin = asin_from_sku(row.get('sku'))
     if asin:
         return 'asin:' + asin
@@ -154,7 +223,17 @@ EBAY_SOURCES = {'ebay', 'ebay_backfill'}
 
 
 def save_rows(db, rows, kind, source='file'):
-    """Caller owns transaction. Aggregate variations at parent listing level."""
+    """Upsert listings and aggregate variation rows at the parent listing level before storing sales or snapshots. Caller owns transaction.
+
+    Args:
+        db: Open SQLite connection; this function does not commit or roll back.
+        rows: Iterable of canonical normalized rows.
+        kind: orders to write sales; other values write listing snapshots.
+        source: Provenance label; authoritative eBay sources may replace conflicting sale counts or dates.
+
+    Returns:
+        None. Writes database rows and raises ValueError for duplicate lines or conflicting non-authoritative sales.
+    """
     groups = defaultdict(list)
     for row in rows:
         observed = row['sold_date'] if kind == 'orders' else row['observed_date']
@@ -194,6 +273,18 @@ def save_rows(db, rows, kind, source='file'):
 
 
 def import_file(db, path, kind='auto', snapshot_date=None, mapping=None):
+    """Import a report once per content and interpretation hash, persisting normalized rows and an import receipt atomically.
+
+    Args:
+        db: Open SQLite connection; this function manages the import transaction.
+        path: CSV or XLSX report filename or Path.
+        kind: orders, listings, or auto header inference.
+        snapshot_date: Optional default date used for listing snapshots.
+        mapping: Optional internal-field to external-column mapping.
+
+    Returns:
+        Number of imported source rows, or zero when the same content and interpretation were already imported.
+    """
     interpretation = json.dumps([kind, snapshot_date, mapping], sort_keys=True).encode()
     digest = hashlib.sha256(Path(path).read_bytes() + interpretation).hexdigest()
     if db.execute('SELECT 1 FROM imports WHERE digest=?', (digest,)).fetchone():

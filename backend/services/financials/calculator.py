@@ -32,11 +32,30 @@ class Financials:
     ordering_fee_cents: int = 0  # Ordering-provider fee charged on this order (already in profit).
 
     def as_dict(self):
+        """Serialize the calculated financial values without altering the source records.
+
+        Args:
+            None.
+
+        Returns:
+            Dictionary containing all Financials dataclass fields.
+        """
         return asdict(self)
 
 
 def amazon_cost(manual_cost_cents, match_status, email_total_cents):
-    """A manually entered cost wins; otherwise a matched/manually linked email's Grand Total."""
+    """Choose a manual cost first, otherwise a confirmed email's Grand Total.
+
+    A manually entered cost wins; otherwise a matched/manually linked email's Grand Total.
+
+    Args:
+        manual_cost_cents: User-entered Amazon cost in cents, or None when no override exists.
+        match_status: Confirmation status; filters may also use comma-separated statuses and COST_UNKNOWN.
+        email_total_cents: Parsed Amazon Grand Total in cents, or None when unavailable.
+
+    Returns:
+        Amazon cost in integer cents, or None when neither confirmed source is available.
+    """
     if manual_cost_cents is not None:
         return manual_cost_cents
     if match_status in {'MATCHED', 'MANUAL'} and email_total_cents is not None:
@@ -46,6 +65,19 @@ def amazon_cost(manual_cost_cents, match_status, email_total_cents):
 
 def compute(*, is_cancelled, return_status, net_revenue_cents, amazon_cost_cents, revenue_source=None,
             ordering_fee_cents=0):
+    """Calculate original and effective order profit, exclusions, flags, margin and ROI from raw accounting inputs.
+
+    Args:
+        is_cancelled: Whether the order has been cancelled and must be excluded from revenue/cost totals.
+        return_status: Effective return status; must belong to RETURN_STATUSES.
+        net_revenue_cents: eBay net revenue after deductions in cents, or None when unknown.
+        amazon_cost_cents: Confirmed Amazon purchase cost in cents, or None when unknown.
+        revenue_source: Optional source label; fulfillment_estimate sets the estimated-revenue flag.
+        ordering_fee_cents: Provider fee in integer cents deducted even for excluded orders; defaults to zero.
+
+    Returns:
+        Financials value object; invalid return statuses raise ValueError.
+    """
     if return_status not in RETURN_STATUSES:
         raise ValueError(f'Unknown return status {return_status!r}')
     known = net_revenue_cents is not None and amazon_cost_cents is not None

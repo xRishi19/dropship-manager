@@ -18,6 +18,14 @@ REASON = 'Reusable phrase across several successful products.'
 
 
 def facts():
+    """Build ranked proven and explore candidate facts with distinct volume, trend, and new-category evidence.
+
+    Args:
+        None.
+
+    Returns:
+        Combined list of proven and explore candidate dictionaries.
+    """
     proven = [{'keyword': p, 'tier': 'proven', 'total_units_sold': 20, 'recent_units_sold': 10,
                'distinct_successful_listings': 4, 'distinct_products': 5, 'trend': 'rising',
                'score': 100 - i, 'explore_score': 50 - i, 'outside_proven_share': None} for i, p in enumerate(PROVEN)]
@@ -29,6 +37,19 @@ def facts():
 
 
 def payload(proven=None, explore=None, markets=None):
+    """Build a structured weekly selection response with reasons, confidence values, and explore market labels.
+
+    Args:
+        proven: Optional ordered proven-keyword list; None uses the first seven fixture
+            keywords.
+        explore: Optional ordered explore-keyword list; None uses the first seven fixture
+            keywords.
+        markets: Optional explore market labels; omitted values supply four new categories and
+            remaining new niches.
+
+    Returns:
+        Dictionary with proven and explore pick lists suitable for Selection validation.
+    """
     explore = explore or EXPLORE[:7]
     markets = markets or ['new_category'] * 4 + ['new_niche'] * (len(explore) - 4)
     return {'proven': [{'keyword': p, 'reason': REASON, 'confidence': .8} for p in (proven or PROVEN[:7])],
@@ -37,6 +58,15 @@ def payload(proven=None, explore=None, markets=None):
 
 
 def test_one_proven_and_one_explore_per_day():
+    """Regression check: one proven and one explore per day.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     rows, dropped = schedule(validate_selection(payload(), facts()), facts(), [])
     assert len(rows) == 14
     assert set(Counter(r['day'] for r in rows).values()) == {2}
@@ -51,6 +81,15 @@ def test_one_proven_and_one_explore_per_day():
 
 @pytest.mark.parametrize('count', [6, 11])
 def test_wrong_counts_fail(count):
+    """Regression check: wrong counts fail.
+
+    Args:
+        count: Expected selection or range-bucket count for the parametrized case.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     data = payload()
     data['proven'] = (data['proven'] + data['proven'])[:count]
     with pytest.raises(ValidationError):
@@ -60,7 +99,18 @@ def test_wrong_counts_fail(count):
 @pytest.mark.parametrize('field,value', [('confidence', 1.1), ('confidence', float('nan')),
     ('confidence', '0.8'), ('keyword', 'invented keyword'), ('supporting_units_sold', 20), ('market', 'other')])
 def test_rejects_invalid_invented_or_extra_fields(field, value):
-    """GPT returns no statistics; Python facts are joined after validation."""
+    """GPT returns no statistics; Python facts are joined after validation.
+
+    Verify that rejects invalid invented or extra fields.
+
+    Args:
+        field: Selection payload field to override with an invalid test value.
+        value: Synthetic amount or invalid field value selected by the current test/helper.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     data = payload()
     data['explore'][0][field] = value
     with pytest.raises((ValueError, ValidationError)):
@@ -68,12 +118,30 @@ def test_rejects_invalid_invented_or_extra_fields(field, value):
 
 
 def test_wrong_tier_unknown_and_redundant_picks_fall_through_to_backups():
+    """Regression check: wrong tier unknown and redundant picks fall through to backups.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     candidates = facts() + [dict(facts()[0], keyword='jeep wrangler parts')]
     data = payload(proven=PROVEN[:3] + ['bike rack', 'invented keyword', 'jeep wrangler parts'] + PROVEN[3:7])
     assert [c.keyword for c in validate_selection(data, candidates).proven] == PROVEN[:7]
 
 
 def test_redundancy_is_checked_across_tiers():
+    """Regression check: redundancy is checked across tiers.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     candidates = facts() + [dict(facts()[-1], keyword='garage door opener')]
     data = payload(explore=['garage door opener'] + EXPLORE[:7], markets=['new_category'] * 8)
     assert [c.keyword for c in validate_selection(data, candidates).explore] == EXPLORE[:7]
@@ -82,6 +150,15 @@ def test_redundancy_is_checked_across_tiers():
 
 
 def test_at_least_four_explore_picks_are_new_categories():
+    """Regression check: at least four explore picks are new categories.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     data = payload(explore=EXPLORE[:10], markets=['new_niche'] * 4 + ['new_category'] * 6)
     kept = validate_selection(data, facts()).explore
     assert Counter(c.market for c in kept) == {'new_niche': 3, 'new_category': 4}
@@ -92,12 +169,30 @@ def test_at_least_four_explore_picks_are_new_categories():
 
 
 def test_resting_keyword_rejected_from_explore():
+    """Regression check: resting keyword rejected from explore.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     data = payload(explore=EXPLORE[:8], markets=['new_category'] * 8)
     kept = validate_selection(data, facts(), cooled=['Bike Racks'])
     assert [c.keyword for c in kept.explore] == EXPLORE[1:8]
 
 
 def test_explore_keywords_rest_for_cooldown_weeks_and_return_when_pool_is_short():
+    """Regression check: explore keywords rest for cooldown weeks and return when pool is short.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     explored = {'week': '2026-09-14', 'results': [{'keyword': k, 'tier': 'Explore'} for k in EXPLORE[:3]]
                 + [{'keyword': PROVEN[0], 'tier': 'Proven'}]}
     assert resting(facts(), [explored], '2026-09-21', 4) == sorted(EXPLORE[:3])
@@ -109,6 +204,15 @@ def test_explore_keywords_rest_for_cooldown_weeks_and_return_when_pool_is_short(
 
 
 def test_history_new_retained_returning_dropped():
+    """Regression check: history new retained returning dropped.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     earlier = [{'results': [{'keyword': p} for p in PROVEN[:7]]},
                {'results': [{'keyword': p} for p in PROVEN[1:8]]}]
     rows, dropped = schedule(payload(), facts(), earlier)
@@ -119,6 +223,15 @@ def test_history_new_retained_returning_dropped():
 
 
 def test_sparse_tiers_never_call_model():
+    """Regression check: sparse tiers never call model.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with pytest.raises(InsufficientCandidates, match='Only 6 proven'):
         select(facts()[4:], [], client=object())
     with pytest.raises(InsufficientCandidates, match='5 explore'):
@@ -126,10 +239,28 @@ def test_sparse_tiers_never_call_model():
 
 
 def test_model_request_and_retry():
+    """Regression check: model request and retry.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     calls = []
     bad = payload()
     bad['proven'][0]['keyword'] = 'invented keyword'
     def parse(**kwargs):
+        """Capture a mocked structured-model request and return a synthetic validated weekly selection response. The first call supplies invalid picks to exercise retry validation.
+
+        Args:
+            kwargs: Keyword arguments forwarded to the mocked callable or used to override synthetic
+                payload fields.
+
+        Returns:
+            SimpleNamespace with status completed and a Selection instance in output_parsed.
+        """
         calls.append(kwargs)
         return SimpleNamespace(status='completed', output_parsed=Selection.model_validate(bad if len(calls) == 1 else payload()))
     result = select(facts(), [], client=SimpleNamespace(responses=SimpleNamespace(parse=parse)))
@@ -143,15 +274,48 @@ def test_model_request_and_retry():
 
 
 def test_refusal_stops_publication():
+    """Regression check: refusal stops publication.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     client = SimpleNamespace(responses=SimpleNamespace(parse=lambda **kw: SimpleNamespace(status='completed', output_parsed=None)))
     with pytest.raises(SelectionError, match='refused'):
         select(facts(), [], client=client)
 
 
 def test_week_saved_and_rerun_does_not_call_model(db, config, monkeypatch):
+    """Regression check: week saved and rerun does not call model.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     monkeypatch.setattr('backend.services.sourcing.weekly.analyze', lambda *args: (facts(), []))
     calls = []
     def selector(*args, **kwargs):
+        """Capture the weekly selector call and return the shared valid selection fixture.
+
+        Args:
+            args: Positional arguments accepted for compatibility with the production callable being
+                mocked.
+            kwargs: Keyword arguments forwarded to the mocked callable or used to override synthetic
+                payload fields.
+
+        Returns:
+            Selection instance parsed from the synthetic proven/explore payload.
+        """
         calls.append(kwargs)
         return Selection.model_validate(payload())
     first = weekly(db, config, '2026-09-23', selector=selector)
@@ -167,8 +331,32 @@ def test_week_saved_and_rerun_does_not_call_model(db, config, monkeypatch):
 
 
 def test_failed_selection_never_persists_week(db, config, monkeypatch):
+    """Regression check: failed selection never persists week.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     monkeypatch.setattr('backend.services.sourcing.weekly.analyze', lambda *args: (facts(), []))
     def selector(*args, **kwargs):
+        """Return too few proven picks to test that failed selection cannot publish a saved week.
+
+        Args:
+            args: Positional arguments accepted for compatibility with the production callable being
+                mocked.
+            kwargs: Keyword arguments forwarded to the mocked callable or used to override synthetic
+                payload fields.
+
+        Returns:
+            Invalid selection payload dictionary containing only six proven picks.
+        """
         return payload(proven=PROVEN[:6])
     with pytest.raises(ValidationError):
         weekly(db, config, '2026-09-23', selector=selector)
@@ -176,6 +364,19 @@ def test_failed_selection_never_persists_week(db, config, monkeypatch):
 
 
 def test_failed_gpt_publishes_marked_deterministic_fallback(db, config, monkeypatch):
+    """Regression check: failed GPT publishes marked deterministic fallback.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     ranked = facts()
     ranked.insert(1, dict(ranked[0], keyword='jeep wrangler parts', score=99.5))
     # Plain single words are skipped without GPT; model codes and allowlisted words stay.
@@ -184,6 +385,17 @@ def test_failed_gpt_publishes_marked_deterministic_fallback(db, config, monkeypa
     ranked.insert(0, dict(ranked[0], keyword='f150', score=101))
     monkeypatch.setattr('backend.services.sourcing.weekly.analyze', lambda *args: (ranked, []))
     def selector(*args, **kwargs):
+        """Simulate structured model output exhausting its validation retries.
+
+        Args:
+            args: Positional arguments accepted for compatibility with the production callable being
+                mocked.
+            kwargs: Keyword arguments forwarded to the mocked callable or used to override synthetic
+                payload fields.
+
+        Returns:
+            Never returns; raises SelectionError to exercise deterministic fallback.
+        """
         raise SelectionError('GPT output failed validation after 3 attempts')
     result = weekly(db, config, '2026-09-23', selector=selector)
     assert result['selection_method'] == 'fallback'
@@ -198,6 +410,19 @@ def test_failed_gpt_publishes_marked_deterministic_fallback(db, config, monkeypa
 
 
 def test_sparse_candidates_never_fall_back(db, config, monkeypatch):
+    """Regression check: sparse candidates never fall back.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     monkeypatch.setattr('backend.services.sourcing.weekly.analyze', lambda *args: (facts()[4:], []))
     with pytest.raises(SelectionError, match='Only 6 proven'):
         weekly(db, config, '2026-09-23')
@@ -205,6 +430,16 @@ def test_sparse_candidates_never_fall_back(db, config, monkeypatch):
 
 
 def test_outcomes_attribute_new_listings_to_recommendation_week(db):
+    """Regression check: outcomes attribute new listings to recommendation week.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     listing = lambda item, title, start: {'item_id': item, 'title': title, 'sku': '', 'sold_quantity': 0,
         'observed_date': '2026-09-20', 'status': 'active', 'start_date': start, 'end_date': None}
     with db:

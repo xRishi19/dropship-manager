@@ -7,7 +7,16 @@ RANGES = ('1d', '1w', '30d', 'month', '3m', '12m', 'ytd')
 
 
 def local_zone(name=None):
-    """Configured IANA zone, else this Mac's zone (from /etc/localtime), else UTC."""
+    """Resolve the configured dashboard time zone, falling back to the system zone and then UTC.
+
+    Configured IANA zone, else this Mac's zone (from /etc/localtime), else UTC.
+
+    Args:
+        name: Optional IANA timezone name; absent values use the system-zone/UTC fallback.
+
+    Returns:
+        ZoneInfo or timezone object; an invalid explicitly configured name raises an error.
+    """
     if name:
         return ZoneInfo(name)
     target = str(Path('/etc/localtime').resolve())
@@ -20,12 +29,32 @@ def local_zone(name=None):
 
 
 def month_start(day, months_back=0):
+    """Find the first day of a month with a relative backward month offset.
+
+    Args:
+        day: Reference calendar date for relative month arithmetic.
+        months_back: Number of months to move backward; negative values move forward.
+
+    Returns:
+        Date at the first day of the requested month, including year rollover.
+    """
     month = day.month - 1 - months_back
     return date(day.year + month // 12, month % 12 + 1, 1)
 
 
 def time_range(range_name, now, zone):
-    """(start, end, granularity, bucket starts) as aware local datetimes; end is exclusive."""
+    """Resolve a dashboard preset or calendar month into local-time bounds and bucket starts.
+
+    (start, end, granularity, bucket starts) as aware local datetimes; end is exclusive.
+
+    Args:
+        range_name: Dashboard range preset or ISO YYYY-MM calendar month.
+        now: Reference aware datetime used for timing and persisted audit state.
+        zone: Accounting time-zone object used for local calendar boundaries.
+
+    Returns:
+        Tuple (start, exclusive end, granularity, buckets); hourly buckets respect DST transitions.
+    """
     local = now.astimezone(zone)
     today = local.date()
     midnight = lambda d: datetime(d.year, d.month, d.day, tzinfo=zone)
@@ -56,6 +85,16 @@ def time_range(range_name, now, zone):
 
 
 def bucket_of(moment, granularity, zone):
+    """Floor a timestamp to the chart bucket boundary in the dashboard zone.
+
+    Args:
+        moment: Aware datetime to format or assign to a local chart bucket.
+        granularity: Chart grouping unit: hour, day, week or month.
+        zone: Accounting time-zone object used for local calendar boundaries.
+
+    Returns:
+        Aware bucket-start datetime; hourly buckets distinguish repeated DST hours.
+    """
     if granularity == 'hour':
         return moment.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0).astimezone(zone)
     local = moment.astimezone(zone)
@@ -68,14 +107,39 @@ def bucket_of(moment, granularity, zone):
 
 
 def parse_utc(value):
+    """Parse an ISO timestamp including the Z UTC designator.
+
+    Args:
+        value: ISO timestamp string; a trailing Z is accepted as UTC.
+
+    Returns:
+        Datetime with the timestamp's supplied timezone offset.
+    """
     return datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
 def utc_iso(moment):
+    """Normalize an aware timestamp to a second-resolution UTC representation.
+
+    Args:
+        moment: Aware datetime to format or assign to a local chart bucket.
+
+    Returns:
+        ISO UTC timestamp string ending in Z.
+    """
     return moment.astimezone(timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
 
 
 def label(bucket, granularity):
+    """Format a readable chart label for an hourly, daily, weekly or monthly bucket.
+
+    Args:
+        bucket: Aware bucket-start datetime; fold marks a repeated local DST hour.
+        granularity: Chart grouping unit: hour, day, week or month.
+
+    Returns:
+        Label string; repeated DST hours include their zone abbreviation.
+    """
     if granularity == 'hour':  # The repeated hour on the DST fall-back day gets its zone name.
         return bucket.strftime('%b %d %H:00 %Z') if bucket.fold else bucket.strftime('%b %d %H:00')
     if granularity == 'month':
@@ -84,11 +148,21 @@ def label(bucket, granularity):
 
 
 def summarize(orders, cashback_rate=0.0):
-    """Cards. Excluded (cancelled/returned/refunded) orders count nowhere in the order count, revenue
+    """Aggregate dashboard cards using effective order financials and separately reported cashback.
+
+    Cards. Excluded (cancelled/returned/refunded) orders count nowhere in the order count, revenue
     or cost, but their ordering-provider fee (-fee effective profit) still reduces profit; orders with
     unknown Amazon cost count in orders and revenue but not in cost or profit (nor their fee, yet).
     Prime Visa cashback is a share of that same Amazon cost, shown separately and never added to profit.
-    Average profit and margin use costed included orders only (their profit includes the fee)."""
+    Average profit and margin use costed included orders only (their profit includes the fee).
+
+    Args:
+        orders: Enriched ledger order dictionaries with effective financials, exclusion flags and match status.
+        cashback_rate: Cashback fraction applied only to included confirmed Amazon costs; defaults to zero.
+
+    Returns:
+        Dictionary of monetary totals, order/review counts, exclusions, average profit and margin.
+    """
     included = [o for o in orders if not o['excluded']]
     excluded = [o for o in orders if o['excluded']]
     costed = [o for o in included if o['cost_known'] and o['effective_revenue_cents'] is not None]
@@ -115,6 +189,17 @@ def summarize(orders, cashback_rate=0.0):
 def series(orders, buckets, granularity, zone):
     # Keyed by UTC instant: on the DST fall-back day the two local 01:00 buckets compare equal as
     # same-zone datetimes, and would otherwise merge and double-count.
+    """Aggregate order financials into predefined chart buckets, keeping DST hours distinct.
+
+    Args:
+        orders: Enriched ledger order dictionaries with created_at and effective financials.
+        buckets: Ordered aware bucket-start datetimes defining the output chart.
+        granularity: Chart grouping unit: hour, day, week or month.
+        zone: Accounting time-zone object used for local calendar boundaries.
+
+    Returns:
+        List of chart-point dictionaries in supplied bucket order, with UTC keys, labels and totals.
+    """
     points = {utc_iso(b): {'revenue_cents': 0, 'cost_cents': 0, 'profit_cents': 0, 'orders': 0, 'awaiting_cost': 0}
               for b in buckets}
     for order in orders:

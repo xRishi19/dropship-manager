@@ -9,6 +9,17 @@ from .selection import TIER_SIZE
 
 
 def listing_metrics(db, as_of, recent_days, window_days=90):
+    """Aggregate observed listing sales and recent/prior units for a sourcing analysis window.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        as_of: Inclusive analysis day as an ISO YYYY-MM-DD string.
+        recent_days: Length of each recent/prior comparison window in days.
+        window_days: Inclusive analysis lookback length in days; defaults to 90.
+
+    Returns:
+        List of listing dictionaries enriched with trend and exposure_days; history-only backfill listings are filtered.
+    """
     end = date.fromisoformat(as_of)
     window_start = end - timedelta(days=window_days - 1)
     recent_start = (end - timedelta(days=recent_days - 1)).isoformat()
@@ -36,15 +47,39 @@ def listing_metrics(db, as_of, recent_days, window_days=90):
 
 
 def exposure_days(row, window_start, end):
-    """Days live inside the analysis window; missing dates assume the whole window."""
+    """Count inclusive listing days inside the analysis window, using missing dates as full-window exposure.
+
+    Days live inside the analysis window; missing dates assume the whole window.
+
+    Args:
+        row: Listing dictionary with optional ISO start_date and end_date values.
+        window_start: First calendar date included in the exposure analysis.
+        end: Inclusive final calendar date of the analysis window.
+
+    Returns:
+        Positive integer number of exposure days, with a minimum of one.
+    """
     start = max(window_start, date.fromisoformat(row['start_date'])) if row.get('start_date') else window_start
     stop = min(end, date.fromisoformat(row['end_date'])) if row.get('end_date') else end
     return max(1, (stop - start).days + 1)
 
 
 def trend(recent, prior, store_recent=0, store_prior=0, min_units=0):
-    """Compare recent vs prior units; with store totals, compare shares of store units
-    so catalog growth alone does not read as a rising keyword."""
+    """Classify recent sales change, optionally normalized by store sales to account for catalog growth.
+
+    Compare recent vs prior units; with store totals, compare shares of store units
+    so catalog growth alone does not read as a rising keyword.
+
+    Args:
+        recent: Units sold in the recent comparison window.
+        prior: Units sold in the preceding comparison window.
+        store_recent: Store-wide units in the recent window for share-normalized trends.
+        store_prior: Store-wide units in the preceding window for share-normalized trends.
+        min_units: Minimum combined recent/prior units required to classify a trend.
+
+    Returns:
+        One of insufficient_data, new_activity, rising, falling or flat.
+    """
     if recent + prior < min_units:
         return 'insufficient_data'
     if store_recent and store_prior:
@@ -56,6 +91,17 @@ def trend(recent, prior, store_recent=0, store_prior=0, min_units=0):
 
 
 def analyze(db, config, as_of, diagnostics=None):
+    """Extract, score, filter and deduplicate factual sourcing keywords and assign proven/explore tiers.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        config: Project configuration supplying database, integrations and business settings.
+        as_of: Inclusive analysis day as an ISO YYYY-MM-DD string.
+        diagnostics: Optional mutable dictionary populated with analysis/filter diagnostics.
+
+    Returns:
+        Tuple (candidate dictionaries, listing metric dictionaries); updates supplied diagnostics in place.
+    """
     listings = listing_metrics(db, as_of, config.recent_days, config.analysis_days)
     # Model codes (F150, RAV4) qualify only when shared by several products; part numbers aren't.
     code_products = defaultdict(set)
@@ -174,8 +220,19 @@ def analyze(db, config, as_of, diagnostics=None):
 
 
 def assign_tiers(candidates, config, titles):
-    """Proven = at least `proven_min_units`; the rest explore. If fewer than 7 distinct
-    proven keywords exist, the highest-scoring explore candidates are promoted."""
+    """Assign proven/explore tiers, promote distinct candidates when necessary and measure outside-proven exposure.
+
+    Proven = at least `proven_min_units`; the rest explore. If fewer than 7 distinct
+    proven keywords exist, the highest-scoring explore candidates are promoted.
+
+    Args:
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        config: Project configuration supplying database, integrations and business settings.
+        titles: Mapping of item ID to listing title used to measure proven-keyword overlap.
+
+    Returns:
+        List of promoted keyword strings; mutates tier/outside_proven_share fields in candidates.
+    """
     for candidate in candidates:
         candidate['tier'] = 'proven' if candidate['total_units_sold'] >= config.tiers.proven_min_units else 'explore'
     distinct = [c['keyword'] for c in candidates if c['tier'] == 'proven']
@@ -206,6 +263,15 @@ def assign_tiers(candidates, config, titles):
 
 
 def coverage(db, as_of):
+    """Describe observed source-data dates, synchronization history and sourcing limitations.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        as_of: Inclusive analysis day as an ISO YYYY-MM-DD string.
+
+    Returns:
+        Coverage dictionary containing sales bounds, API syncs, dated listing count and explanatory limitations.
+    """
     span = db.execute('SELECT min(sold_date),max(sold_date) FROM sales WHERE sold_date<=?', (as_of,)).fetchone()
     syncs = [dict(r) for r in db.execute('SELECT start_date,end_date,completed_at FROM syncs ORDER BY id')]
     dated = db.execute('SELECT count(*) FROM listings WHERE start_date IS NOT NULL').fetchone()[0]

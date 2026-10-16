@@ -21,17 +21,42 @@ CITY_PREFIXES = {'st': 'saint', 'ste': 'sainte', 'ft': 'fort', 'mt': 'mount', 'p
 
 
 def clean(text):
-    """Lowercase ASCII words: accents folded ("José" == "Jose"), punctuation removed."""
+    """Fold accents and remove punctuation to compare names and locations consistently.
+
+    Lowercase ASCII words: accents folded ("José" == "Jose"), punctuation removed.
+
+    Args:
+        text: Name/location text to normalize; missing or empty text becomes an empty string.
+
+    Returns:
+        Lowercase ASCII words separated by single spaces; empty input becomes an empty string.
+    """
     folded = unicodedata.normalize('NFKD', text or '').encode('ascii', 'ignore').decode()
     return re.sub(r'\s+', ' ', re.sub(r"[^a-z0-9 ]+", ' ', folded.lower())).strip()
 
 
 def norm_first_name(name):
+    """Extract the first normalized word of a recipient name.
+
+    Args:
+        name: Recipient full name; empty or missing values are accepted.
+
+    Returns:
+        First name string, or None when the input contains no words.
+    """
     words = clean(name).split()
     return words[0] if words else None
 
 
 def norm_city(city):
+    """Normalize a city and expand common leading abbreviations such as St and Ft.
+
+    Args:
+        city: City text to normalize; empty or missing values are accepted.
+
+    Returns:
+        Normalized city string, or None for an empty city.
+    """
     words = clean(city).split()
     if words and words[0] in CITY_PREFIXES:
         words[0] = CITY_PREFIXES[words[0]]
@@ -39,6 +64,14 @@ def norm_city(city):
 
 
 def norm_state(state):
+    """Normalize a state name or abbreviation into its comparison form.
+
+    Args:
+        state: State name or abbreviation to normalize.
+
+    Returns:
+        Uppercase state code, uppercase unknown text, or None for empty input.
+    """
     text = clean(state)
     if not text:
         return None
@@ -48,23 +81,62 @@ def norm_state(state):
 
 
 def parse_time(value):
+    """Parse an ISO timestamp, accepting a trailing Z UTC designator.
+
+    Args:
+        value: ISO timestamp string; a trailing Z is accepted as UTC.
+
+    Returns:
+        Datetime preserving the offset supplied in the timestamp.
+    """
     return datetime.fromisoformat(value.replace('Z', '+00:00'))
 
 
 def in_window(order_time, email_time, cfg):
+    """Check whether an email falls within the configured order-matching time window.
+
+    Args:
+        order_time: Parsed order placement datetime.
+        email_time: Parsed confirmation receipt datetime.
+        cfg: Matching configuration containing window lengths and scoring/decision thresholds.
+
+    Returns:
+        True when email_time lies between the skew-adjusted lower bound and inclusive upper bound.
+    """
     return (order_time - timedelta(minutes=cfg.skew_minutes) <= email_time
             <= order_time + timedelta(hours=cfg.window_hours))
 
 
 def score(order, email, cfg):
-    """order: first_name, city, state, quantity, created_at, category (optional).
+    """Evaluate time, destination, quantity and category evidence for one order/email pair.
+
+    order: first_name, city, state, quantity, created_at, category (optional).
     email: first_name, city, state, quantity, received_at, category (optional).
-    Returns {'eligible', 'score', 'minutes_after', 'signals': {name: {'points', 'detail'}}}."""
+    Returns {'eligible', 'score', 'minutes_after', 'signals': {name: {'points', 'detail'}}}.
+
+    Args:
+        order: Matching dictionary with created_at, first_name, city, state, quantity and optional category.
+        email: Parsed confirmation dictionary with received_at, first_name, city, state, quantity and optional category.
+        cfg: Matching configuration containing window lengths and scoring/decision thresholds.
+
+    Returns:
+        Dictionary with eligible, score, minutes_after and per-signal points/detail; ineligible results include reason.
+    """
     order_time, email_time = parse_time(order['created_at']), parse_time(email['received_at'])
     minutes = round((email_time - order_time).total_seconds() / 60, 1)
     signals = {}
 
     def signal(name, points, detail):
+        """Record one explanation and its points in the enclosing score result.
+
+        Args:
+            name: Matching-signal key such as state, quantity, time or category.
+            points: Numeric points awarded or deducted by the matching signal.
+            detail: Human-readable explanation of a matching signal.
+
+        Returns:
+            None; updates the enclosing signals dictionary.
+        """
         signals[name] = {'points': points, 'detail': detail}
 
     if not in_window(order_time, email_time, cfg):

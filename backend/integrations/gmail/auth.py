@@ -13,6 +13,14 @@ from .client import SCOPES
 
 
 def main(argv=None):
+    """Run desktop OAuth consent for read-only Gmail and save the resulting token with owner-only permissions.
+
+    Args:
+        argv: Optional argument list; None parses process command-line arguments.
+
+    Returns:
+        Exit code 0 on success or 1 when the configured desktop client file is absent. Opens a browser and writes the token file; OAuth failures propagate.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', default='config.json')
     args = parser.parse_args(argv)

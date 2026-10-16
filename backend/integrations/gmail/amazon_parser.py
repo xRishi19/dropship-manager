@@ -55,26 +55,68 @@ class _Text(HTMLParser):
     HIDDEN = {'style', 'script', 'head', 'title'}
 
     def __init__(self):
+        """Initialize an HTML text collector with no visible fragments and zero hidden-element nesting.
+
+        Args:
+            None.
+
+        Returns:
+            None. Initializes HTMLParser state and the fragment buffer.
+        """
         super().__init__()
         self.parts = []
         self.hidden = 0
 
     def handle_starttag(self, tag, attrs):
+        """Track entry into hidden HTML elements and add line boundaries for recognized block tags.
+
+        Args:
+            tag: Lowercase start-tag name supplied by HTMLParser.
+            attrs: Parsed attribute pairs supplied by HTMLParser; attributes are not used.
+
+        Returns:
+            None. Updates hidden nesting and collected fragments.
+        """
         if tag in self.HIDDEN:
             self.hidden += 1
         if tag in self.BLOCK:
             self.parts.append('\n')
 
     def handle_endtag(self, tag):
+        """Leave a hidden HTML region without allowing the hidden nesting count to become negative.
+
+        Args:
+            tag: Lowercase end-tag name supplied by HTMLParser.
+
+        Returns:
+            None. Decrements hidden nesting when applicable.
+        """
         if tag in self.HIDDEN and self.hidden:
             self.hidden -= 1
 
     def handle_data(self, data):
+        """Collect text fragments only when outside script, style, head, and title regions.
+
+        Args:
+            data: Text content supplied by HTMLParser.
+
+        Returns:
+            None. Appends visible text to the fragment buffer.
+        """
         if not self.hidden:
             self.parts.append(data)
 
 
 def to_text(body, is_html):
+    """Extract visible email text and normalize entities, invisible characters, spaces, and repeated blank lines.
+
+    Args:
+        body: Email body string containing HTML or plain text.
+        is_html: Whether to parse the body as HTML before whitespace normalization.
+
+    Returns:
+        Clean plain-text string suitable for recipient, quantity, and total matching.
+    """
     if is_html:
         parser = _Text()
         parser.feed(body)
@@ -85,15 +127,40 @@ def to_text(body, is_html):
 
 
 def redact(body):
-    """Amazon Order IDs are never stored or used."""
+    """Remove Amazon order numbers before email text is stored or used; Amazon Order IDs are never stored or used.
+
+    Args:
+        body: Body text or a falsey value treated as empty text.
+
+    Returns:
+        String with matching Amazon order numbers replaced by [order number removed].
+    """
     return AMAZON_ORDER_NUMBER.sub('[order number removed]', body or '')
 
 
 def cents(value):
+    """Convert comma-separated decimal dollar text captured from an email total into cents.
+
+    Args:
+        value: Decimal monetary string such as 1,234.56, without a currency symbol.
+
+    Returns:
+        Integer cents; invalid decimal input raises a decimal conversion error.
+    """
     return int(Decimal(value.replace(',', '')) * 100)
 
 
 def parse(subject, body, is_html=True):
+    """Extract reconciliation fields from supported Amazon confirmation layouts, excluding Amazon order IDs and distinguishing parsed, partial, and failed results.
+
+    Args:
+        subject: Message subject used for fallback item count and category.
+        body: HTML/plain-text email body containing totals and recipient information.
+        is_html: Whether body requires HTML text extraction; defaults to True.
+
+    Returns:
+        Dictionary with recipient fields, quantity, category, grand_total_cents, parse_status, and parse_error; missing fields remain None.
+    """
     text = to_text(body or '', is_html)
     result = {'first_name': None, 'city': None, 'state': None, 'quantity': None, 'category': None,
               'grand_total_cents': None, 'parse_status': 'failed', 'parse_error': None}

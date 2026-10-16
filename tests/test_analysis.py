@@ -8,11 +8,36 @@ from backend.services.sourcing.keywords import extract, canonical, redundant
 
 
 def sale(item, title, quantity, sold_date='2026-09-15', sku='', order=None):
+    """Build one normalized sale row with a default order identifier derived from the item and sale date.
+
+    Args:
+        item: Synthetic listing identifier, or listing identifier inserted into the XML fixture.
+        title: Product title included in the synthetic order or listing.
+        quantity: Parameterized quantity or synthetic units ordered; malformed cases exercise
+            input validation.
+        sold_date: Synthetic sale date used for sourcing analysis windows.
+        sku: Synthetic seller SKU used to exercise product identity extraction.
+        order: Optional synthetic order identifier; omitted or empty values use item plus
+            sold_date.
+
+    Returns:
+        Dictionary with item_id, title, quantity, sold_date, sku, and order_id.
+    """
     return {'item_id': item, 'title': title, 'quantity': quantity, 'sold_date': sold_date,
             'sku': sku, 'order_id': order or item + sold_date}
 
 
 def test_exact_window_boundaries_future_and_unsold(db):
+    """Regression check: exact window boundaries future and unsold.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, [sale('1', 'garage door cable', 2, '2026-09-01'),
                        sale('1', 'garage door cable', 3, '2026-09-08'),
@@ -26,6 +51,17 @@ def test_exact_window_boundaries_future_and_unsold(db):
 
 
 def test_viral_sku_excluded_even_across_relistings(db, config):
+    """Regression check: viral sku excluded even across relistings.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, [sale('1', 'Jeep Wrangler floor mats', 50, sku='same'),
                        sale('2', 'Jeep Wrangler seat cover', 50, sku='same'),
@@ -35,6 +71,17 @@ def test_viral_sku_excluded_even_across_relistings(db, config):
 
 
 def test_units_breadth_mean_median_unsold_and_no_money(db, config):
+    """Regression check: units breadth mean median unsold and no money.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, [sale('1', 'Jeep Wrangler floor mats', 10, sku='a'),
                        sale('2', 'Jeep Wrangler seat cover', 6, sku='b')], 'orders')
@@ -52,6 +99,15 @@ def test_units_breadth_mean_median_unsold_and_no_money(db, config):
 
 
 def test_literal_extraction_no_stopword_or_number_bridging():
+    """Regression check: literal extraction no stopword or number bridging.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     words = extract('New OEM replacement filter for Toyota Tacoma AB-123 2020 garage door opener')
     assert {'oem', 'replacement filter', 'toyota tacoma', 'garage door'} <= words
     assert not any('123' in w or '2020' in w or 'for' in w for w in words)
@@ -62,6 +118,15 @@ def test_literal_extraction_no_stopword_or_number_bridging():
 
 
 def test_redundancy():
+    """Regression check: redundancy.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert canonical('Replacement Filters') == canonical('filter replacement')
     assert redundant('garage door', 'garage door opener')
     assert redundant('replacement filters', 'replacement filter')
@@ -69,6 +134,15 @@ def test_redundancy():
 
 
 def test_trend():
+    """Regression check: trend.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert trend(0, 0) == 'flat'
     assert trend(4, 0) == 'new_activity'
     assert trend(12, 10) == 'rising'
@@ -77,6 +151,17 @@ def test_trend():
 
 
 def test_low_volume_repeated_products_qualify_with_transparent_diagnostics(db, config):
+    """Regression check: low volume repeated products qualify with transparent diagnostics.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, [sale('1', 'Toyota Camry floor mats', 1, sku='a'),
                        sale('2', 'Toyota Camry seat cover', 1, sku='b')], 'orders')
@@ -97,17 +182,46 @@ def test_low_volume_repeated_products_qualify_with_transparent_diagnostics(db, c
 
 
 def test_two_units_on_one_product_still_fail(db, config):
+    """Regression check: two units on one product still fail.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, [sale('1', 'Toyota Camry floor mats', 2, sku='a')], 'orders')
     assert analyze(db, config, '2026-09-23')[0] == []
 
 
 def test_common_hitch_synonyms_cannot_consume_two_slots():
+    """Regression check: common hitch synonyms cannot consume two slots.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert canonical('tow hitch') == canonical('trailer hitch')
     assert redundant('tow hitch', 'trailer hitch')
 
 
 def test_configured_incomplete_phrases_are_excluded():
+    """Regression check: configured incomplete phrases are excluded.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     phrases = extract('OEM iridium spark plug direct replacement', blocked=['iridium spark', 'direct replacement'])
     assert 'iridium spark' not in phrases
     assert 'direct replacement' not in phrases
@@ -115,11 +229,34 @@ def test_configured_incomplete_phrases_are_excluded():
 
 
 def listing(item, title, sku='', start=None, end=None, observed='2026-09-20', status='active'):
+    """Build a synthetic listing snapshot with zero sold units and optional start/end dates.
+
+    Args:
+        item: Synthetic listing identifier, or listing identifier inserted into the XML fixture.
+        title: Product title included in the synthetic order or listing.
+        sku: Synthetic seller SKU used to exercise product identity extraction.
+        start: Optional listing start date; None exercises the missing-exposure-date behavior.
+        end: Optional actual listing end date; None leaves the listing open.
+        observed: Listing snapshot observation date used by the synthetic listing response.
+        status: Snapshot state, defaulting to active.
+
+    Returns:
+        Normalized listing dictionary for the sourcing ingestion tests.
+    """
     return {'item_id': item, 'title': title, 'sku': sku, 'sold_quantity': 0, 'observed_date': observed,
             'status': status, 'start_date': start, 'end_date': end}
 
 
 def test_model_codes_kept_merged_and_part_numbers_rejected():
+    """Regression check: model codes kept merged and part numbers rejected.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     codes = {'f150', 'rav4', '4runner', 'crv'}
     words = extract('Mud Flaps for Ford F-150 RAV4 4Runner CR-V 2pcs M12x1.25 90919-22386 UF311', codes=codes,
                     unigram_allowlist=['cr-v'])
@@ -131,6 +268,15 @@ def test_model_codes_kept_merged_and_part_numbers_rejected():
 
 
 def test_phrases_never_cross_separators_or_truncated_words():
+    """Regression check: phrases never cross separators or truncated words.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     words = extract('KADRICK Lug Nuts | Heavy Duty Chrome, Wheel Studs for Nissan Muran...')
     assert {'lug nuts', 'heavy duty', 'wheel studs'} <= words
     assert 'nuts heavy' not in words and 'chrome wheel' not in words
@@ -138,12 +284,32 @@ def test_phrases_never_cross_separators_or_truncated_words():
 
 
 def test_single_words_limited_to_model_codes_and_curated_list():
+    """Regression check: single words limited to model codes and curated list.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     words = extract('Toyota Tacoma F150 brown seat cover', codes={'f150'}, unigram_allowlist=['oem', 'tacoma'])
     assert {'tacoma', 'f150', 'toyota tacoma', 'seat cover'} <= words
     assert not {'toyota', 'brown', 'seat', 'cover'} & words
 
 
 def test_rare_model_codes_are_treated_as_part_numbers(db, config):
+    """Regression check: rare model codes are treated as part numbers.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     rows = []
     for index, product in enumerate(['floor mats', 'seat cover', 'mud flaps', 'tail light', 'door handle', 'sun visor']):
         rows.append(sale(str(index), f'F150 {product}', 2, sku=f'f{index}'))
@@ -156,6 +322,17 @@ def test_rare_model_codes_are_treated_as_part_numbers(db, config):
 
 
 def test_curated_model_names_qualify_but_generic_words_do_not(db, config):
+    """Regression check: curated model names qualify but generic words do not.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     curated = config.model_copy(update={'unigram_allowlist': ['oem', 'tacoma']})
     with db:
         save_rows(db, [sale('1', 'Tacoma floor mats', 2, sku='a'), sale('2', 'Tacoma seat cover', 2, sku='b'),
@@ -166,6 +343,17 @@ def test_curated_model_names_qualify_but_generic_words_do_not(db, config):
 
 
 def test_below_store_average_sell_through_is_gated_and_lift_ranks(db, config):
+    """Regression check: below store average sell through is gated and lift ranks.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     nouns = ['bracket', 'cable', 'spring', 'roller']
     rows = [sale(str(i), f'garage door {noun}', 1, sku=f'g{i}') for i, noun in enumerate(nouns)]
     rows += [sale(str(10 + i), f'pool pump {noun}', 1, sku=f'p{i}') for i, noun in enumerate(['motor', 'seal', 'basket', 'lid'])]
@@ -185,6 +373,16 @@ def test_below_store_average_sell_through_is_gated_and_lift_ranks(db, config):
 
 
 def test_exposure_days_use_listing_dates(db):
+    """Regression check: exposure days use listing dates.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, [listing('1', 'garage door cable', start='2026-09-01', end='2026-09-10', status='ended_unsold'),
                        listing('2', 'garage door spring', start='2026-01-01'),
@@ -196,6 +394,15 @@ def test_exposure_days_use_listing_dates(db):
 
 
 def test_trend_normalizes_catalog_growth_and_small_counts():
+    """Regression check: trend normalizes catalog growth and small counts.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert trend(2, 1, 100, 50, min_units=4) == 'insufficient_data'
     assert trend(20, 10, 200, 100, min_units=4) == 'flat'
     assert trend(20, 10, 100, 100, min_units=4) == 'rising'
@@ -203,6 +410,17 @@ def test_trend_normalizes_catalog_growth_and_small_counts():
 
 
 def test_different_products_that_sell_together_both_stay(db, config):
+    """Regression check: different products that sell together both stay.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     rows = [sale('1', 'Spark Plug set', 3, sku='a'), sale('2', 'Spark Plug with Ignition Coil', 1, sku='b'),
             sale('3', 'Spark Plug and Ignition Coil', 1, sku='c'), sale('4', 'Spark Plug gapper', 2, sku='d')]
     with db:
@@ -215,6 +433,17 @@ def test_different_products_that_sell_together_both_stay(db, config):
 
 
 def test_nested_phrase_on_identical_listings_keeps_complete_concept(db, config):
+    """Regression check: nested phrase on identical listings keeps complete concept.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     rows = [sale(str(i), f'Spark Plug {name}', 2, sku=f's{i}') for i, name in enumerate(['set', 'gapper', 'socket'])]
     with db:
         save_rows(db, rows, 'orders')
@@ -228,6 +457,14 @@ TIER_PHRASES = ['garage door', 'pool pump', 'bike rack', 'dog leash', 'coffee ma
 
 
 def tier_rows():
+    """Build a sourcing dataset containing repeated proven product phrases and sparse explore phrases.
+
+    Args:
+        None.
+
+    Returns:
+        List of synthetic sale dictionaries with enough product breadth to test tier scoring.
+    """
     rows = [sale(f'{i}-{j}', f'{phrase} {noun}', 2, sku=f'{i}{j}')
             for i, phrase in enumerate(TIER_PHRASES) for j, noun in enumerate(['cable', 'motor', 'bracket'])]
     return rows + [sale('y1', 'yoga mat thick', 1, sku='y1'), sale('y2', 'yoga mat strap', 1, sku='y2'),
@@ -235,6 +472,17 @@ def tier_rows():
 
 
 def test_proven_explore_tiers_scores_and_new_market_share(db, config):
+    """Regression check: proven explore tiers scores and new market share.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, tier_rows(), 'orders')
     diagnostics = {}
@@ -252,6 +500,17 @@ def test_proven_explore_tiers_scores_and_new_market_share(db, config):
 
 
 def test_strongest_explore_candidates_promoted_when_proven_is_short(db, config):
+    """Regression check: strongest explore candidates promoted when proven is short.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         save_rows(db, tier_rows(), 'orders')
     strict = config.model_copy(update={'min_lift': 0, 'tiers': config.tiers.model_copy(update={'proven_min_units': 7})})

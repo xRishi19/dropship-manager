@@ -7,29 +7,59 @@ import { useSyncRefresh } from "@/lib/sync";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+/**
+ * Compute today’s calendar date using the browser’s local year, month, and day.
+ *
+ * @remarks Takes no arguments.
+ * @returns Zero-padded YYYY-MM-DD date string.
+ */
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // Parse "YYYY-MM-DD" as plain numbers so no timezone can shift the day.
+/**
+ * Parse calendar-date components numerically without timezone conversions.
+ *
+ * @param iso - Calendar date in YYYY-MM-DD form.
+ * @returns Tuple of numeric year, one-based month, and day; input is assumed well formed.
+ */
 function parts(iso: string): [number, number, number] {
   const [y, m, d] = iso.split("-").map(Number);
   return [y, m, d];
 }
 
+/**
+ * Format an expense’s plain calendar date without shifting it across timezones.
+ *
+ * @param iso - YYYY-MM-DD calendar date, or null/undefined.
+ * @returns Abbreviated month, day, and year text, or an em dash when missing.
+ */
 function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";
   const [y, m, d] = parts(iso);
   return `${MONTHS[m - 1]} ${d}, ${y}`;
 }
 
+/**
+ * Add the English ordinal suffix to an integer, handling the 11th–13th exceptions.
+ *
+ * @param n - Integer day or count to render.
+ * @returns Number followed by st, nd, rd, or th.
+ */
 function ordinal(n: number): string {
   const rem100 = n % 100;
   if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
   return `${n}${{ 1: "st", 2: "nd", 3: "rd" }[n % 10] ?? "th"}`;
 }
 
+/**
+ * Describe an expense’s one-time date or monthly recurrence, including an optional end date.
+ *
+ * @param e - Expense containing its start date, recurrence flag, and optional end date.
+ * @returns Human-readable date or monthly schedule description.
+ */
 function when(e: Expense): string {
   if (!e.recurring) return fmtDate(e.start_date);
   const [y, m, d] = parts(e.start_date);
@@ -37,12 +67,30 @@ function when(e: Expense): string {
   return e.end_date ? `${base} · ends ${fmtDate(e.end_date)}` : base;
 }
 
+/**
+ * Determine whether a recurring expense has ended by date or has no remaining occurrence.
+ *
+ * @param e - Expense with recurrence, end-date, and next-occurrence fields.
+ * @returns True only for a recurring expense with an end date that has passed or no next occurrence.
+ */
 function isEnded(e: Expense): boolean {
   return e.recurring && e.end_date !== null && (e.end_date < today() || !e.next_occurrence);
 }
 
-/** Read-only: the provider fee is charged per eBay order (cancelled included) and is already in each order's profit. */
+/**
+ * Render provider fees as a read-only summary; these per-order fees already contribute to each order’s profit and are not deducted again.
+ *
+ * @param fees - Optional ordering-fee totals supplied through props; undefined shows a placeholder.
+ * @returns React element with the per-order amount and month, year, and all-time fee totals.
+ */
 function OrderingFeesCard({ fees }: { fees: OrderingFees | undefined }) {
+  /**
+   * Format an order count alongside its aggregate provider fee.
+   *
+   * @param count - Number of orders charged the fee.
+   * @param cents - Aggregate provider fee in cents.
+   * @returns Count with correct singular/plural wording and a formatted USD amount.
+   */
   const line = (count: number, cents: number) => `${count} order${count === 1 ? "" : "s"} · ${money(cents)}`;
   return (
     <div className="card stat">
@@ -62,8 +110,20 @@ function OrderingFeesCard({ fees }: { fees: OrderingFees | undefined }) {
   );
 }
 
+/**
+ * Create an independent blank expense form initialized with today’s local date.
+ *
+ * @remarks Takes no arguments.
+ * @returns ExpenseInput with empty name/amount, today’s date, no recurrence, and no end date.
+ */
 const EMPTY_FORM = (): ExpenseInput => ({ name: "", amount: "", date: today(), recurring: false, end_date: null });
 
+/**
+ * Render expense totals and the form/list for adding, editing, stopping, and deleting expenses. Reloads totals after mutations and completed syncs.
+ *
+ * @remarks Takes no arguments.
+ * @returns React fragment containing totals, editable expense form, errors, and the expense table.
+ */
 export default function ExpensesPage() {
   const [data, setData] = useState<ExpensesResponse | null>(null);
   const [form, setForm] = useState<ExpenseInput>(EMPTY_FORM);
@@ -72,6 +132,12 @@ export default function ExpensesPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  /**
+   * Fetch expenses and ordering-fee totals, updating page data or the displayed error.
+   *
+   * @remarks Takes no arguments.
+   * @returns Promise resolving after data or error state updates; handled request failures do not reject.
+   */
   const load = useCallback(
     () => api<ExpensesResponse>("/expenses").then(setData).catch((e: Error) => setError(e.message)),
     [],
@@ -79,6 +145,13 @@ export default function ExpensesPage() {
   useEffect(() => { load(); }, [load]);
   useSyncRefresh(load); // Ordering-fee counts follow new orders.
 
+  /**
+   * Execute an expense mutation with busy/error state and reload totals regardless of the result.
+   *
+   * @param path - Backend-relative expense endpoint.
+   * @param init - Request method, serialized body, and other fetch options.
+   * @returns Promise resolving to true on success or false on a handled request error.
+   */
   const mutate = async (path: string, init: RequestInit) => {
     setBusy(true);
     setError(null);
@@ -94,8 +167,20 @@ export default function ExpensesPage() {
     }
   };
 
+  /**
+   * Restore a blank expense form with today’s date and leave edit mode.
+   *
+   * @remarks Takes no arguments.
+   * @returns Nothing; replaces form state and clears the editing ID.
+   */
   const reset = () => { setForm(EMPTY_FORM()); setEditingId(null); };
 
+  /**
+   * Prevent browser form submission, normalize the entered expense, and create or update it. Reset the form only after the mutation succeeds.
+   *
+   * @param event - React form-submission event whose default navigation is prevented.
+   * @returns Promise resolving with no value after the mutation and any form reset.
+   */
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     const body: ExpenseInput = {
@@ -112,6 +197,12 @@ export default function ExpensesPage() {
     if (ok) reset();
   };
 
+  /**
+   * Populate the expense form from a saved record and clear deletion confirmation and errors.
+   *
+   * @param e - Expense selected for editing; its cents amount is converted to decimal-dollar text.
+   * @returns Nothing; sets editing ID and editable form state.
+   */
   const edit = (e: Expense) => {
     setEditingId(e.id);
     setConfirmDelete(null);
@@ -125,6 +216,12 @@ export default function ExpensesPage() {
     });
   };
 
+  /**
+   * End a recurring expense today, rejecting future-starting expenses with an explanatory message.
+   *
+   * @param e - Recurring expense to stop; its name, amount, and start date are preserved.
+   * @returns Nothing; starts an update request for eligible expenses or sets a validation error.
+   */
   const stop = (e: Expense) => {
     const now = today();
     if (e.start_date > now) {
@@ -137,6 +234,12 @@ export default function ExpensesPage() {
     mutate(`/expenses/${e.id}`, { method: "PUT", body: JSON.stringify(body) });
   };
 
+  /**
+   * Delete a saved expense and reset the editor if it was showing that record.
+   *
+   * @param id - Numeric expense identifier selected for deletion.
+   * @returns Promise resolving with no value after the delete attempt; failures are displayed by mutate.
+   */
   const remove = async (id: number) => {
     setConfirmDelete(null);
     const ok = await mutate(`/expenses/${id}`, { method: "DELETE" });

@@ -6,12 +6,26 @@ import { percent, Week, WeeklyRow } from "@/lib/api";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+/**
+ * Format numeric sourcing evidence with fixed precision, removing unnecessary trailing decimal zeros.
+ *
+ * @param value - Evidence value of unknown type; only numbers are formatted.
+ * @param digits - Maximum fixed decimal places; defaults to two.
+ * @returns Numeric text without redundant decimal zeros, or an em dash for nonnumbers.
+ */
 function num(value: unknown, digits = 2): string {
   if (typeof value !== "number") return "—";
   const text = value.toFixed(digits);
   return digits > 0 ? text.replace(/0+$/, "").replace(/\.$/, "") : text;
 }
 
+/**
+ * Render an expandable weekly keyword pick with tier/status badges, evidence, product examples, and selection rationale.
+ *
+ * @param row - Saved weekly selection and its statistics.
+ * @param asins - Optional ASIN count displayed beside the tier badge.
+ * @returns React element containing the pick summary and its optional expanded evidence.
+ */
 function Pick({ row, asins }: { row: WeeklyRow; asins?: number }) {
   const [open, setOpen] = useState(false);
   const s = row.stats;
@@ -55,8 +69,21 @@ function Pick({ row, asins }: { row: WeeklyRow; asins?: number }) {
   );
 }
 
+/**
+ * Render saved Proven and Explore picks grouped by weekday, with analysis metadata and dropped/resting keywords. Show guidance when picks are missing or predate tiers.
+ *
+ * @param week - Saved weekly results, analysis metadata, and optional tier ASIN counts supplied through props.
+ * @returns React fragment containing the weekly grid and context, or an empty-state element.
+ */
 export default function WeeklyPicks({ week }: { week: Week }) {
   if (!week.week) return <div className="empty">No weekly picks yet. Run the weekly analysis to create them.</div>;
+  /**
+   * Find the first saved selection for a particular weekday and tier.
+   *
+   * @param day - Weekday name matching the saved row.
+   * @param tier - Tier name, such as Proven or Explore.
+   * @returns Matching WeeklyRow, or undefined if no selection exists.
+   */
   const byDay = (day: string, tier: string) => week.results.find((r) => r.day === day && r.tier === tier);
   const legacy = week.results.some((r) => !r.tier);
   return (

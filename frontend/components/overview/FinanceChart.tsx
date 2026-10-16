@@ -13,6 +13,13 @@ export const METRICS: { key: Metric; label: string; color: string; field: keyof 
 
 type TooltipProps = { active?: boolean; payload?: { payload: SeriesPoint }[] };
 
+/**
+ * Render financial values and order counts for the chart’s hovered bucket.
+ *
+ * @param active - Whether Recharts considers the tooltip active.
+ * @param payload - Optional chart payload array whose first entry contains the selected SeriesPoint.
+ * @returns Tooltip React element, or null when inactive or lacking data.
+ */
 function ChartTooltip({ active, payload }: TooltipProps) {
   if (!active || !payload?.length) return null;
   const point = payload[0].payload;
@@ -32,6 +39,12 @@ function ChartTooltip({ active, payload }: TooltipProps) {
   );
 }
 
+/**
+ * Compactly format signed cents for chart-axis labels, abbreviating amounts of at least $1,000.
+ *
+ * @param cents - Signed monetary amount in cents.
+ * @returns Rounded dollar label, with a Unicode minus for negatives and a k suffix for thousands.
+ */
 const axisMoney = (cents: number) => {
   const dollars = Math.abs(cents / 100);
   const sign = cents < 0 ? "−" : "";
@@ -40,10 +53,24 @@ const axisMoney = (cents: number) => {
 
 type Props = { series: SeriesPoint[]; metrics: Set<Metric>; onSelectMonth?: (month: string) => void };
 
+/**
+ * Render selected revenue, Amazon-cost, and profit series as responsive grouped bars. Monthly buckets can invoke a callback to open their daily view.
+ *
+ * @param series - Financial buckets and labels supplied through props.
+ * @param metrics - Set selecting which metric bars are visible.
+ * @param onSelectMonth - Optional callback receiving a clicked bucket’s YYYY-MM month key.
+ * @returns React element containing the responsive chart, axes, zero line, and tooltip.
+ */
 export default function FinanceChart({ series, metrics, onSelectMonth }: Props) {
   const shown = METRICS.filter((m) => metrics.has(m.key));
   // Monthly bars (12 Months / YTD) open that month's daily view.
   const clickable = !!onSelectMonth && series.some((p) => p.month);
+  /**
+   * Forward a clicked monthly chart bucket to the month-selection callback.
+   *
+   * @param bar - Recharts bar event data with an optional SeriesPoint payload.
+   * @returns Nothing; invokes onSelectMonth only when a month exists in the payload.
+   */
   const select = (bar: { payload?: SeriesPoint }) => {
     if (bar.payload?.month) onSelectMonth?.(bar.payload.month);
   };

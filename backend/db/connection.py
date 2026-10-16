@@ -12,6 +12,15 @@ KEEP_BACKUPS = 10
 
 
 def connect(path: str, migrate: bool = True) -> sqlite3.Connection:
+    """Open a row-oriented SQLite connection, configure concurrency, and optionally migrate its schema.
+
+    Args:
+        path: SQLite filename or :memory:; parent directories are created for disk files.
+        migrate: Whether to apply outstanding schema migrations before returning.
+
+    Returns:
+        Open sqlite3.Connection owned and closed by the caller.
+    """
     memory = path == ':memory:'
     if not memory:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -30,7 +39,15 @@ def connect(path: str, migrate: bool = True) -> sqlite3.Connection:
 
 
 def apply_migrations(db, path=None):
-    """Apply pending migrations in order. A non-empty file database is backed up first."""
+    """Apply pending numbered migrations and record each successful version. A non-empty file database is backed up first.
+
+    Args:
+        db: Open SQLite connection on which migrations and their version records run.
+        path: Optional database Path used for backups; omit for an in-memory database.
+
+    Returns:
+        Path to the pre-migration backup, or None if no backup was required. Migration transactions are managed here.
+    """
     db.execute('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, '
                'name TEXT NOT NULL, applied_at TEXT NOT NULL)')
     applied = {row[0] for row in db.execute('SELECT version FROM schema_migrations')}
@@ -50,6 +67,15 @@ def apply_migrations(db, path=None):
 
 
 def backup_database(db, path):
+    """Copy a consistent SQLite snapshot into the sibling backups directory and prune older snapshots beyond KEEP_BACKUPS.
+
+    Args:
+        db: Open source SQLite connection to snapshot using SQLite backup.
+        path: Source database Path used to derive backup directory and filename.
+
+    Returns:
+        Path to the new timestamped backup; the temporary destination connection is closed here.
+    """
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     target = path.parent / 'backups' / f'{path.stem}-{stamp}.sqlite3'
     target.parent.mkdir(parents=True, exist_ok=True)

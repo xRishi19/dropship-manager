@@ -6,6 +6,18 @@ from backend.services.sourcing.analysis import listing_metrics
 
 
 def test_csv_preamble_bom_and_repeat_safe_overlapping_exports(db, tmp_path):
+    """Regression check: CSV preamble bom and repeat safe overlapping exports.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     content = '\ufeffeBay report\nItem Number,Item Title,Order Number,Quantity,Sale Date,Custom Label\n123,Jeep Wrangler cabin filter,order1,3,2026-09-01,abc\n'
     a = tmp_path / 'a.csv'
     a.write_text(content)
@@ -18,6 +30,18 @@ def test_csv_preamble_bom_and_repeat_safe_overlapping_exports(db, tmp_path):
 
 
 def test_xlsx_preserves_text_ids_and_parses_date(db, tmp_path):
+    """Regression check: xlsx preserves text ids and parses date.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     from datetime import datetime
     path = tmp_path / 'orders.xlsx'
     book = Workbook()
@@ -29,6 +53,18 @@ def test_xlsx_preserves_text_ids_and_parses_date(db, tmp_path):
 
 
 def test_inventory_quantity_is_never_units_sold(db, tmp_path):
+    """Regression check: inventory quantity is never units sold.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'inventory.csv'
     path.write_text('Item number,Title,Available quantity,Sold quantity\n1,garage door spring,900,20\n')
     with pytest.raises(ValueError, match='date'):
@@ -41,6 +77,20 @@ def test_inventory_quantity_is_never_units_sold(db, tmp_path):
 
 @pytest.mark.parametrize('quantity', ['-1', '1.5', '', 'bad'])
 def test_bad_rows_fail_whole_file(db, tmp_path, quantity):
+    """Regression check: bad rows fail whole file.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        quantity: Parameterized quantity or synthetic units ordered; malformed cases exercise
+            input validation.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'bad.csv'
     path.write_text('Item Number,Title,Order Number,Quantity,Sale Date\n1,pressure washer nozzle,o1,2,2026-09-01\n2,pressure washer hose,o2,' + quantity + ',2026-09-02\n')
     with pytest.raises(ValueError, match='row 3'):
@@ -49,6 +99,18 @@ def test_bad_rows_fail_whole_file(db, tmp_path, quantity):
 
 
 def test_conflicting_order_rolls_back_new_listings(db, tmp_path):
+    """Regression check: conflicting order rolls back new listings.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'orders.csv'
     path.write_text('Item Number,Title,Order Number,Quantity,Sale Date\n1,garage door cable,o1,2,2026-09-01\n')
     import_file(db, path)
@@ -59,6 +121,18 @@ def test_conflicting_order_rolls_back_new_listings(db, tmp_path):
 
 
 def test_custom_headers_and_cancelled_order(db, tmp_path):
+    """Regression check: custom headers and cancelled order.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'custom.csv'
     path.write_text('Item Number,Title,Order Number,Units,Sale Date,Order Status\n1,garage door bracket,order1,8,2026-09-01,Cancelled\n')
     import_file(db, path, mapping={'quantity': 'Units'})
@@ -66,6 +140,16 @@ def test_custom_headers_and_cancelled_order(db, tmp_path):
 
 
 def test_missing_sold_counter_is_rejected(tmp_path):
+    """Regression check: missing sold counter is rejected.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'inventory.csv'
     path.write_text('Item Number,Title,Available quantity\n1,garage door bracket,8\n')
     with pytest.raises(ValueError, match='sold_quantity'):
@@ -73,6 +157,18 @@ def test_missing_sold_counter_is_rejected(tmp_path):
 
 
 def test_duplicate_lines_are_rejected_not_double_counted(db, tmp_path):
+    """Regression check: duplicate lines are rejected not double counted.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'duplicate.csv'
     row = '1,garage door cable,o1,2,2026-09-01\n'
     path.write_text('Item Number,Title,Order Number,Quantity,Sale Date\n' + row + row)
@@ -82,6 +178,18 @@ def test_duplicate_lines_are_rejected_not_double_counted(db, tmp_path):
 
 
 def test_distinct_transactions_for_same_order_parent_are_summed(db, tmp_path):
+    """Regression check: distinct transactions for same order parent are summed.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'variations.csv'
     path.write_text('Item Number,Title,Order Number,Quantity,Sale Date,Transaction ID\n1,garage door cable,o1,2,2026-09-01,t1\n1,garage door cable,o1,2,2026-09-01,t2\n')
     import_file(db, path)
@@ -89,6 +197,15 @@ def test_distinct_transactions_for_same_order_parent_are_summed(db, tmp_path):
 
 
 def test_asin_decoded_from_tool_sku():
+    """Regression check: ASIN decoded from tool sku.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     from backend.db.ingest import asin_from_sku, product_key
     assert asin_from_sku('v0a1b2c3dQjBURVNUQVNJTg') == 'B0TESTASIN'
     assert product_key({'sku': 'v0a1b2c3dQjBURVNUQVNJTg', 'title': 'x'}) == 'asin:B0TESTASIN'
@@ -98,6 +215,18 @@ def test_asin_decoded_from_tool_sku():
 
 
 def test_asin_upgrades_earlier_proxy_and_existing_rows_migrate(db, tmp_path):
+    """Regression check: ASIN upgrades earlier proxy and existing rows migrate.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     from backend.db.connection import connect
     from backend.db.ingest import save_rows
     with db:

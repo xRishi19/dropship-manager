@@ -9,6 +9,12 @@ import { api, HistoryEntry, Job, KeywordCandidate, Outcome, Week } from "@/lib/a
 type Tab = "picks" | "candidates" | "history";
 type HistoryResponse = { entries: HistoryEntry[]; outcomes: Outcome[]; resting_now: string[]; cooldown_weeks: number };
 
+/**
+ * Render weekly sourcing picks, candidate exploration, and historical outcomes. Lazily loads tabs, resumes active jobs, and polls weekly analysis jobs until completion or failure.
+ *
+ * @remarks Takes no arguments.
+ * @returns React fragment containing sourcing tabs, job status, errors, and the analysis confirmation modal.
+ */
 export default function SourcingPage() {
   const [tab, setTab] = useState<Tab>("picks");
   const [week, setWeek] = useState<Week | null>(null);
@@ -19,7 +25,19 @@ export default function SourcingPage() {
   const [refreshListings, setRefreshListings] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
 
+  /**
+   * Display a failed sourcing request in the page-level error message.
+   *
+   * @param e - Error reported by an API request.
+   * @returns Nothing; sets the error message state.
+   */
   const fail = (e: Error) => setError(e.message);
+  /**
+   * Fetch the saved weekly sourcing selections, updating the picks or displaying a request error.
+   *
+   * @remarks Takes no arguments.
+   * @returns Promise resolving after the picks or error state has been updated; handled failures do not reject.
+   */
   const loadWeek = useCallback(() => api<Week>("/sourcing/week").then(setWeek).catch(fail), []);
   useEffect(() => { loadWeek(); }, [loadWeek]);
   useEffect(() => {
@@ -51,6 +69,12 @@ export default function SourcingPage() {
     return () => clearInterval(timer);
   }, [job, loadWeek]);
 
+  /**
+   * Submit a confirmed weekly analysis job using the selected listings-refresh option. Close confirmation, clear the previous error, and retain the returned job for polling.
+   *
+   * @remarks Takes no arguments.
+   * @returns Nothing; starts an API request and updates job/error state when it settles.
+   */
   const run = () => {
     setConfirming(false);
     setError(null);

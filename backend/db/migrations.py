@@ -89,11 +89,27 @@ CREATE TABLE IF NOT EXISTS sync_state (
 
 
 def columns(db, table):
+    """Inspect column names in a SQLite table without modifying it.
+
+    Args:
+        db: Open SQLite connection.
+        table: Trusted schema table name interpolated into PRAGMA table_info.
+
+    Returns:
+        Set of existing column names; an absent table produces an empty set.
+    """
     return {row[1] for row in db.execute(f'PRAGMA table_info({table})')}
 
 
 def m001_sourcing(db):
-    """The original sourcing schema, including upgrades older databases needed."""
+    """Create the original sourcing tables, add legacy listing date columns, and upgrade decodable SKU identities to ASIN keys.
+
+    Args:
+        db: SQLite connection supplied by the migration runner.
+
+    Returns:
+        None. Executes schema DDL and listing updates; version recording is owned by the migration runner.
+    """
     db.executescript(SOURCING_SCHEMA)
     for column in ('start_date', 'end_date'):
         if column not in columns(db, 'listings'):
@@ -104,6 +120,14 @@ def m001_sourcing(db):
 
 
 def m002_accounting(db):
+    """Create order, financial, email, matching, returns, and sync-state tables and add the listing category column if absent.
+
+    Args:
+        db: SQLite connection supplied by the migration runner.
+
+    Returns:
+        None. Executes schema changes; version recording is owned by the migration runner.
+    """
     db.executescript(ACCOUNTING_SCHEMA)
     if 'category' not in columns(db, 'listings'):
         db.execute('ALTER TABLE listings ADD COLUMN category TEXT')
@@ -119,7 +143,37 @@ CREATE TABLE IF NOT EXISTS expenses (
 
 
 def m003_expenses(db):
+    """Create the expense table for one-time and monthly recurring charges.
+
+    Args:
+        db: SQLite connection supplied by the migration runner.
+
+    Returns:
+        None. Executes schema DDL; version recording is owned by the migration runner.
+    """
     db.executescript(EXPENSES_SCHEMA)
 
 
-MIGRATIONS = [(1, 'sourcing', m001_sourcing), (2, 'accounting', m002_accounting), (3, 'expenses', m003_expenses)]
+def m004_notifications(db):
+    """Create notification activation and per-order delivery tables and add cached listing image fields.
+
+    Args:
+        db: SQLite connection supplied by the migration runner; this migration must run only once.
+
+    Returns:
+        None. Executes additive schema changes; version recording is owned by the migration runner.
+    """
+    db.executescript("""
+    CREATE TABLE notification_settings (name TEXT PRIMARY KEY, activated_at TEXT NOT NULL);
+    CREATE TABLE sale_notifications (
+        order_id TEXT PRIMARY KEY REFERENCES orders(order_id),
+        attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT,
+        sent_at TEXT, message_id TEXT, last_error TEXT
+    );
+    """)
+    db.execute('ALTER TABLE listings ADD COLUMN image_url TEXT')
+    db.execute('ALTER TABLE listings ADD COLUMN image_checked INTEGER NOT NULL DEFAULT 0')
+
+
+MIGRATIONS = [(1, 'sourcing', m001_sourcing), (2, 'accounting', m002_accounting), (3, 'expenses', m003_expenses),
+              (4, 'notifications', m004_notifications)]

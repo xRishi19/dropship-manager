@@ -13,9 +13,26 @@ AMAZON = ('<p>Ship to: JANE DOE - SPRINGFIELD, IL 62704</p><p>Order # 111-222222
 
 
 def test_loop_runs_cycles_wakes_early_and_never_overlaps():
+    """Regression check: loop runs cycles wakes early and never overlaps.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     calls, active, overlaps = [], [0], []
 
     def cycle():
+        """Record worker-thread execution and overlap observations while simulating a short successful sync cycle.
+
+        Args:
+            None.
+
+        Returns:
+            Dictionary with ok set to True after captured counters and calls are updated.
+        """
         active[0] += 1
         overlaps.append(active[0] > 1)
         time.sleep(0.05)
@@ -24,6 +41,14 @@ def test_loop_runs_cycles_wakes_early_and_never_overlaps():
         return {'ok': True}
 
     async def scenario():
+        """Exercise initial polling, overlapping run attempts, and a thread-triggered wake before cleanly stopping the loop.
+
+        Args:
+            None.
+
+        Returns:
+            The stopped SyncLoop instance for result assertions.
+        """
         loop = SyncLoop(cycle, interval_seconds=3600)
         loop.start()
         await asyncio.sleep(0.2)  # First cycle runs immediately on start.
@@ -41,6 +66,18 @@ def test_loop_runs_cycles_wakes_early_and_never_overlaps():
 
 
 def test_sync_now_runs_a_cycle_when_background_sync_is_disabled(tmp_path, monkeypatch):
+    """Regression check: sync now runs a cycle when background sync is disabled.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     import json
 
     from fastapi.testclient import TestClient
@@ -65,6 +102,16 @@ def test_sync_now_runs_a_cycle_when_background_sync_is_disabled(tmp_path, monkey
 
 
 def test_parsed_emails_keep_no_body_and_order_numbers_are_redacted(db):
+    """Regression check: parsed emails keep no body and order numbers are redacted.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 9, 24, tzinfo=timezone.utc)
     received = int(now.timestamp() * 1000)
     store_email(db, {'id': 'parsed', 'internal_date_ms': received, 'subject': 'Ordered: "Lug Nuts"',
@@ -77,6 +124,16 @@ def test_parsed_emails_keep_no_body_and_order_numbers_are_redacted(db):
 
 
 def test_only_the_newest_backups_are_kept(tmp_path):
+    """Regression check: only the newest backups are kept.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'app.sqlite3'
     db = sqlite3.connect(path)
     db.execute('CREATE TABLE t (x)')

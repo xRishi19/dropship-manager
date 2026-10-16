@@ -39,7 +39,19 @@ class InsufficientCandidates(SelectionError):
 
 
 def validate_selection(payload, candidates, cooled=(), min_new_category=4):
-    """Keep GPT's first 7 usable picks per tier, in its ranked order."""
+    """Validate ranked GPT picks against actual candidates, tier rules, cooldowns and redundancy.
+
+    Keep GPT's first 7 usable picks per tier, in its ranked order.
+
+    Args:
+        payload: Selection instance or data accepted by Selection.model_validate.
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        cooled: Recently explored keyword strings currently excluded by cooldown.
+        min_new_category: Required new-category explore count out of seven; defaults to four.
+
+    Returns:
+        Selection with seven usable choices per tier; raises SelectionError when a complete schedule is impossible.
+    """
     selected = payload if isinstance(payload, Selection) else Selection.model_validate(payload)
     tiers = {c['keyword']: c.get('tier') for c in candidates}
     cooled = {canonical(k) for k in cooled}
@@ -73,18 +85,48 @@ def validate_selection(payload, candidates, cooled=(), min_new_category=4):
 
 
 def fallback(candidates, allowlist=(), cooled=(), min_new_category=4):
-    """Top Python scores per tier, skipping redundant variants. Used only when GPT fails.
+    """Choose deterministic score-ranked candidates when semantic GPT selection fails.
+
+    Top Python scores per tier, skipping redundant variants. Used only when GPT fails.
     Without GPT's judgment, plain single words ("plug", "light") are too often
     fragments, so only phrases, model codes (F150) and allowlisted words qualify.
-    Explore picks count as new_category when none of their listings mention a proven keyword."""
+    Explore picks count as new_category when none of their listings mention a proven keyword.
+
+    Args:
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        allowlist: Curated single-word keywords allowed by deterministic fallback.
+        cooled: Recently explored keyword strings currently excluded by cooldown.
+        min_new_category: Target number of new-category explore picks; defaults to four and remaining slots may use other explore candidates.
+
+    Returns:
+        Selection with seven nonredundant picks per tier; raises InsufficientCandidates rather than padding.
+    """
     allowlist = {phrase_key(p) for p in allowlist}
     cooled = {canonical(k) for k in cooled}
     chosen = []
 
     def usable(keyword):
+        """Require a complete phrase, model code or allowlisted single word for deterministic selection.
+
+        Args:
+            keyword: Literal product-title keyword string to assess.
+
+        Returns:
+            True when the enclosing fallback may use the keyword.
+        """
         return ' ' in keyword or model_code(keyword) or phrase_key(keyword) in allowlist
 
     def pick(pool, limit, accept=lambda c: True):
+        """Choose a bounded set of acceptable candidates while avoiding all already chosen keyword variants.
+
+        Args:
+            pool: Ranked candidate dictionaries to scan for selection.
+            limit: Maximum number of rows or candidates to return.
+            accept: Predicate used to decide whether a candidate may be selected.
+
+        Returns:
+            List of picked candidate dictionaries; appends their keywords to the enclosing chosen list.
+        """
         picked = []
         for candidate in pool:
             if len(picked) == limit:
@@ -96,6 +138,14 @@ def fallback(candidates, allowlist=(), cooled=(), min_new_category=4):
         return picked
 
     def is_new(candidate):
+        """Identify explore candidates whose listings mention no proven keyword.
+
+        Args:
+            candidate: Candidate dictionary containing scored keyword evidence.
+
+        Returns:
+            True when outside_proven_share is exactly one.
+        """
         return candidate.get('outside_proven_share') == 1
 
     proven = pick(sorted((c for c in candidates if c.get('tier') == 'proven'), key=lambda c: -c['score']), TIER_SIZE)
@@ -160,6 +210,19 @@ availability was verified. Return the required structured JSON only.'''
 
 
 def select(candidates, history, model='gpt-5.4-mini', client=None, cooled=(), min_new_category=4):
+    """Ask OpenAI for structured semantic picks and retry validation corrections up to three times.
+
+    Args:
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        history: Prior keyword recommendation outcomes provided as context for semantic selection.
+        model: OpenAI model identifier used for structured keyword selection.
+        client: Optional OpenAI client; None constructs a client with a bounded timeout and retries.
+        cooled: Recently explored keyword strings currently excluded by cooldown.
+        min_new_category: Required number of explore picks targeting new categories.
+
+    Returns:
+        Validated Selection; raises InsufficientCandidates or SelectionError for unusable candidate pools/output.
+    """
     cooled_keys = {canonical(k) for k in cooled}
     proven = [c for c in candidates if c.get('tier') == 'proven']
     explore = sorted((c for c in candidates if c.get('tier') == 'explore' and canonical(c['keyword']) not in cooled_keys),

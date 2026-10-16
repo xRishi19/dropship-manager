@@ -12,6 +12,17 @@ from factories import amazon_email, ebay_order
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    """Construct an eBay client using this callable fake as its HTTP transport.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Yields:
+        EbayClient instance backed by an HTTPX MockTransport.
+    """
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     config = json.loads(open('config.json').read())
     config.update(database=str(tmp_path / 'app.sqlite3'), output_dir=str(tmp_path / 'output'))
@@ -32,6 +43,16 @@ def client(tmp_path, monkeypatch):
 
 
 def test_overview_orders_and_detail(client):
+    """Regression check: overview orders and detail.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     overview = client.get('/api/overview?range=1w').json()
     assert overview['cards']['total_orders'] == 2 and overview['cards']['awaiting_cost'] == 2
     assert len(overview['series']) == 7
@@ -46,6 +67,16 @@ def test_overview_orders_and_detail(client):
 
 
 def test_manual_actions_through_the_api(client):
+    """Regression check: manual actions through the API.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert client.post('/api/orders/A/amazon-cost', json={'amount': 'abc'}).status_code == 400
     order = client.post('/api/orders/A/amazon-cost', json={'amount': '$21.50'}).json()
     assert (order['amazon_cost_cents'], order['match_status']) == (2150, 'MANUAL')
@@ -58,6 +89,16 @@ def test_manual_actions_through_the_api(client):
 
 
 def test_csv_export_filtered_and_all(client):
+    """Regression check: CSV export filtered and all.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     response = client.get('/api/orders/export?scope=all')
     assert response.headers['content-type'].startswith('text/csv')
     assert 'attachment; filename="orders-all.csv"' == response.headers['content-disposition']
@@ -68,18 +109,92 @@ def test_csv_export_filtered_and_all(client):
 
 
 def test_weekly_run_requires_confirmation_and_key(client):
+    """Regression check: weekly run requires confirmation and key.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert client.post('/api/sourcing/weekly/run', json={}).status_code == 400
     response = client.post('/api/sourcing/weekly/run', json={'confirm': True})
     assert response.status_code == 400 and 'OPENAI_API_KEY' in response.json()['detail']
 
 
 def test_sync_status_and_sync_now(client):
+    """Regression check: sync status and sync now.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     status = client.get('/api/sync/status').json()
     assert status['gmail_connected'] is False and status['loop']['interval_seconds'] == 60
     assert client.post('/api/sync/now').status_code == 200
 
 
 def test_sourcing_endpoints_without_saved_weeks(client):
+    """Regression check: sourcing endpoints without saved weeks.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert client.get('/api/sourcing/week').json() == {'week': None, 'results': []}
     assert 'candidates' in client.get('/api/sourcing/candidates').json()
     assert client.get('/api/sourcing/history').json()['entries'] == []
+
+
+def test_manual_confirmation_and_recheck_wake_notifications_after_commit(client, monkeypatch):
+    """Regression check: manual confirmation and recheck wake notifications after commit.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
+    app = client.app
+    observed = []
+
+    def wake():
+        """Read matches through a separate SQLite connection when notifications are triggered, proving API changes are committed.
+
+        Args:
+            None.
+
+        Returns:
+            None. Appends the visible (order_id, status, manual_cost_cents) rows to the captured
+            observations.
+        """
+        db = connect(app.state.config.database)
+        try:
+            # A separate connection must see the committed changes before delivery is scheduled.
+            observed.append([tuple(r) for r in db.execute(
+                'SELECT order_id, status, manual_cost_cents FROM order_matches ORDER BY order_id')])
+        finally:
+            db.close()
+
+    monkeypatch.setattr(app.state.notifications, 'trigger', wake)
+    assert client.post('/api/orders/A/amazon-cost', json={'amount': '21.50'}).status_code == 200
+    assert observed[-1] == [('A', 'MANUAL', 2150)]
+    assert client.post('/api/orders/B/match', json={'gmail_message_id': 'm1'}).status_code == 200
+    assert observed[-1] == [('A', 'MANUAL', 2150), ('B', 'MANUAL', None)]
+    assert client.post('/api/orders/B/recheck').status_code == 200
+    assert len(observed) == 3
+    assert app.state.loop.task is None

@@ -13,11 +13,30 @@ NOW = datetime(2026, 9, 21, 12, tzinfo=timezone.utc)
 
 
 def counts(db):
+    """Count accounting rows across order, item, sale, financial-record, and transaction tables.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        Dictionary mapping each accounting table name to its integer row count.
+    """
     return {t: db.execute(f'SELECT count(*) FROM {t}').fetchone()[0]
             for t in ('orders', 'order_items', 'sales', 'financial_records', 'ebay_transactions')}
 
 
 def test_duplicate_and_overlapping_syncs_never_duplicate(db):
+    """Regression check: duplicate and overlapping syncs never duplicate.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     first = [ebay_order('A'), ebay_order('B', items=[('111', 'Lug Nuts', 1, ''), ('222', 'Spark Plugs', 2, '')])]
     with db:
         store_orders(db, first, NOW)
@@ -33,6 +52,16 @@ def test_duplicate_and_overlapping_syncs_never_duplicate(db):
 
 
 def test_order_fields_asin_address_and_estimated_revenue(db):
+    """Regression check: order fields ASIN address and estimated revenue.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         store_orders(db, [ebay_order('A', name='jane q doe', city='Saint Louis', state='MO')], NOW)
     order = load_orders(db)[0]
@@ -44,6 +73,16 @@ def test_order_fields_asin_address_and_estimated_revenue(db):
 
 
 def test_finances_are_authoritative_and_survive_later_order_syncs(db):
+    """Regression check: finances are authoritative and survive later order syncs.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         store_orders(db, [ebay_order('A')], NOW)
         store_transactions(db, [sale_transaction('A', 41.0, fvf=6.0, ad=0.0), charge('A', 2.5)], NOW)
@@ -54,6 +93,16 @@ def test_finances_are_authoritative_and_survive_later_order_syncs(db):
 
 
 def test_finance_transactions_before_their_order_are_applied_later(db):
+    """Regression check: finance transactions before their order are applied later.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         store_transactions(db, [sale_transaction('A', 40.0)], NOW)
         assert counts(db)['financial_records'] == 0
@@ -63,6 +112,15 @@ def test_finance_transactions_before_their_order_are_applied_later(db):
 
 
 def test_aggregate_finances_nets_fees_ads_refunds_and_other_charges():
+    """Regression check: aggregate finances nets fees ads refunds and other charges.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     rows = [transaction_row(t) for t in [
         sale_transaction('A', 44.0, gross=55.0, fvf=6.0, ad=1.0, tax=5.0),
         charge('A', 3.0, fee_type='AD_FEE'),
@@ -77,6 +135,16 @@ def test_aggregate_finances_nets_fees_ads_refunds_and_other_charges():
 
 
 def test_cancelled_order_counts_zero_units_for_sourcing(db):
+    """Regression check: cancelled order counts zero units for sourcing.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         store_orders(db, [ebay_order('A', items=[('111', 'Lug Nuts', 3, '')])], NOW)
         store_orders(db, [ebay_order('A', items=[('111', 'Lug Nuts', 3, '')], cancelled=True)], NOW)
@@ -85,6 +153,16 @@ def test_cancelled_order_counts_zero_units_for_sourcing(db):
 
 
 def test_refund_and_return_statuses_from_ebay(db):
+    """Regression check: refund and return statuses from eBay.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with db:
         store_orders(db, [ebay_order('A', payment='FULLY_REFUNDED'), ebay_order('B'), ebay_order('C')], NOW)
         store_returns(db, [{'orderId': 'B', 'returnId': 'r1', 'state': 'ITEM_SHIPPED', 'status': 'RETURN_REQUESTED'},
@@ -98,6 +176,17 @@ def test_refund_and_return_statuses_from_ebay(db):
 
 
 def test_old_accounting_orders_do_not_change_sourcing_candidates(db, config):
+    """Regression check: old accounting orders do not change sourcing candidates.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        config: Validated application configuration fixture with a temporary output directory.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     recent = [ebay_order(f'R{i}', created='2026-09-10T12:00:00.000Z',
                          items=[(f'1{i}', f'garage door {noun}', 2, f'sku{i}')])
               for i, noun in enumerate(['cable', 'spring', 'roller', 'opener'])]
@@ -127,6 +216,16 @@ def test_old_accounting_orders_do_not_change_sourcing_candidates(db, config):
 
 
 def test_migrations_back_up_existing_database_once_and_keep_data(tmp_path):
+    """Regression check: migrations back up existing database once and keep data.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     path = tmp_path / 'sourcing.sqlite3'
     old = sqlite3.connect(path)
     old.executescript('''CREATE TABLE listings (item_id TEXT PRIMARY KEY, title TEXT NOT NULL, product_key TEXT NOT NULL,
@@ -141,7 +240,7 @@ def test_migrations_back_up_existing_database_once_and_keep_data(tmp_path):
     assert len(backups) == 1
     assert db.execute('SELECT product_key FROM listings').fetchone()[0] == 'asin:B0TESTASIN'
     assert db.execute('SELECT count(*) FROM weeks').fetchone()[0] == 1
-    assert [r[0] for r in db.execute('SELECT version FROM schema_migrations')] == [1, 2, 3]
+    assert [r[0] for r in db.execute('SELECT version FROM schema_migrations')] == [1, 2, 3, 4]
     saved = sqlite3.connect(backups[0])
     assert saved.execute('SELECT product_key FROM listings').fetchone()[0].startswith('sku:')  # Pre-migration copy.
     saved.close()

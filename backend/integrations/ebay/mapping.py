@@ -16,7 +16,14 @@ AD_FEE_TYPES = {'AD_FEE', 'PROMOTED_LISTING_FEE', 'PROMOTED_LISTINGS_FEE', 'PROM
 
 
 def cents(amount):
-    """eBay Amount ({'value': '12.34', 'currency': 'USD'}) or plain value -> integer cents."""
+    """Convert an eBay Amount object or plain monetary value to integer cents using decimal half-up rounding.
+
+    Args:
+        amount: Dictionary with value/currency, numeric text/value, or None.
+
+    Returns:
+        Integer cents, or None for absent/empty values and invalid decimal text.
+    """
     if amount is None:
         return None
     value = amount.get('value') if isinstance(amount, dict) else amount
@@ -29,11 +36,26 @@ def cents(amount):
 
 
 def currency(amount):
+    """Extract the currency code from an eBay Amount object.
+
+    Args:
+        amount: Amount dictionary or another value lacking currency metadata.
+
+    Returns:
+        Currency value from the dictionary, or None for non-dictionaries or missing currency.
+    """
     return amount.get('currency') if isinstance(amount, dict) else None
 
 
 def iso_utc(value):
-    """eBay ISO timestamp -> canonical second-precision UTC ('2026-01-01T05:00:00Z')."""
+    """Canonicalize an eBay ISO timestamp to second-precision UTC, for example 2026-01-01T05:00:00Z.
+
+    Args:
+        value: ISO timestamp string; falsey values are passed through.
+
+    Returns:
+        UTC timestamp string or the original falsey value; invalid timestamps raise ValueError.
+    """
     if not value:
         return value
     moment = datetime.fromisoformat(value.replace('Z', '+00:00'))
@@ -41,12 +63,28 @@ def iso_utc(value):
 
 
 def first_name(full_name):
+    """Take the first whitespace-delimited word of a shipping recipient name.
+
+    Args:
+        full_name: Full recipient name string or a falsey value.
+
+    Returns:
+        First name string, or None when there are no words.
+    """
     parts = (full_name or '').split()
     return parts[0] if parts else None
 
 
 def parse_order(order, synced_at):
-    """Fulfillment order -> (orders row, order_items rows, estimated financial record)."""
+    """Translate a Fulfillment order into an accounting order row, line-item rows, and estimated finances until a Finances SALE posts.
+
+    Args:
+        order: Raw Fulfillment order dictionary with orderId, creationDate, and lineItems.
+        synced_at: Timestamp attached to the order row as its last sync time.
+
+    Returns:
+        Tuple (order row, item row list, estimated financial record). Money is represented in cents and original payloads are serialized into raw_json.
+    """
     ship_to = {}
     for instruction in order.get('fulfillmentStartInstructions') or []:
         ship_to = (instruction.get('shippingStep') or {}).get('shipTo') or {}
@@ -93,6 +131,14 @@ def parse_order(order, synced_at):
 
 
 def refunds(order):
+    """Sum completed Fulfillment refunds, treating absent refund statuses as refunded.
+
+    Args:
+        order: Fulfillment order dictionary whose paymentSummary may contain refunds.
+
+    Returns:
+        Integer total refund cents; pending refunds and missing/invalid amounts contribute zero.
+    """
     total = 0
     for refund in (order.get('paymentSummary') or {}).get('refunds') or []:
         if refund.get('refundStatus', 'REFUNDED') in {'REFUNDED', 'COMPLETED'}:
@@ -101,7 +147,14 @@ def refunds(order):
 
 
 def order_sales_rows(order):
-    """The sourcing `sales` view of an order: one row per line, quantity 0 if cancelled."""
+    """Translate an order into sourcing sales rows, one per line item, with zero quantity for cancelled orders.
+
+    Args:
+        order: Raw Fulfillment order including IDs, creationDate, and lineItems.
+
+    Returns:
+        List of report-style sale dictionaries to be validated by the ingest normalizer.
+    """
     canceled = (order.get('cancelStatus') or {}).get('cancelState') == 'CANCELED'
     return [{'order_id': order['orderId'], 'item_id': item['legacyItemId'], 'line_id': item['lineItemId'],
              'title': item['title'], 'sku': item.get('sku', ''),
@@ -110,6 +163,14 @@ def order_sales_rows(order):
 
 
 def transaction_order_id(transaction):
+    """Find the eBay order associated with a Finances transaction, using its direct orderId before ORDER_ID references.
+
+    Args:
+        transaction: Raw Finances transaction dictionary.
+
+    Returns:
+        Order ID value, or None when no order reference exists.
+    """
     if transaction.get('orderId'):
         return transaction['orderId']
     for reference in transaction.get('references') or []:
@@ -119,6 +180,14 @@ def transaction_order_id(transaction):
 
 
 def transaction_row(transaction):
+    """Translate a Finances transaction into a persistent accounting row while retaining the raw payload.
+
+    Args:
+        transaction: Raw Finances transaction with transactionId and optional money/reference fields.
+
+    Returns:
+        Dictionary containing transaction identity/type, associated order, date, amount cents, booking entry, and serialized raw_json.
+    """
     amount = cents(transaction.get('amount')) or 0
     return {'transaction_id': transaction['transactionId'], 'transaction_type': transaction.get('transactionType', ''),
             'order_id': transaction_order_id(transaction), 'transaction_date': transaction.get('transactionDate', ''),
@@ -127,9 +196,14 @@ def transaction_row(transaction):
 
 
 def aggregate_finances(transactions):
-    """All posted Finances transactions for one order -> authoritative financial fields.
-    net revenue = credits - debits (sale net of deducted fees, minus ad fees, refunds and
-    other charges), i.e. what eBay actually pays out for the order."""
+    """Aggregate all posted transactions for one order into authoritative finances. Net revenue is credits minus debits: sale net of deducted fees, minus ad fees, refunds, and other charges.
+
+    Args:
+        transactions: Sequence of normalized transaction rows with transaction_type, amount_cents, booking_entry, and raw_json.
+
+    Returns:
+        Financial field dictionary with source finances, or None until at least one SALE transaction is present. Other fees are also grouped by type.
+    """
     sales = [t for t in transactions if t['transaction_type'] == 'SALE']
     if not sales:
         return None
@@ -172,7 +246,14 @@ RETURN_DONE_WORDS = ('CLOSED', 'REFUNDED', 'COMPLETED')
 
 
 def return_status(member):
-    """VERIFY: Post-Order return state/status -> RETURN_STARTED/COMPLETED/CANCELLED."""
+    """Infer the effective return status from Post-Order state/status and actual seller refund. VERIFY this mapping against account payloads.
+
+    Args:
+        member: Raw return-search member with state/status and optional sellerTotalRefund.
+
+    Returns:
+        RETURN_CANCELLED for cancellations or closed returns without refunds, RETURN_COMPLETED for completed refunded returns, otherwise RETURN_STARTED.
+    """
     text = ' '.join(str(member.get(k) or '') for k in ('state', 'status')).upper()
     if any(word in text for word in RETURN_CANCELLED_WORDS):
         return 'RETURN_CANCELLED'

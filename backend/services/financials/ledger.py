@@ -10,7 +10,7 @@ SELECT o.*, f.currency AS fin_currency, f.gross_total_cents, f.sales_tax_cents, 
        f.other_fees_cents, f.other_fees_json, f.ad_fee_cents, f.refund_cents, f.net_revenue_cents,
        f.source AS revenue_source,
        m.status AS match_status, m.confidence AS match_confidence, m.gmail_message_id, m.manual_cost_cents,
-       m.method AS match_method, m.candidates_json,
+       m.method AS match_method, m.candidates_json, m.matched_at, m.updated_at AS match_updated_at,
        e.grand_total_cents AS email_total_cents, e.received_at AS email_received_at, e.subject AS email_subject,
        r.ebay_status AS ebay_return_status, r.manual_status AS manual_return_status
 FROM orders o
@@ -22,8 +22,21 @@ LEFT JOIN returns r ON r.order_id = o.order_id
 
 
 def load_orders(db, start=None, end=None, order_ids=None, ordering_fee_cents=0):
-    """Orders created in [start, end) (UTC ISO strings), newest first, with financials applied
-    (each order's profit includes the ordering-provider fee, config accounting.ordering_fee_cents)."""
+    """Load orders with items, match evidence, return state and calculated financials.
+
+    Orders created in [start, end) (UTC ISO strings), newest first, with financials applied
+    (each order's profit includes the ordering-provider fee, config accounting.ordering_fee_cents).
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        start: Optional inclusive ISO UTC creation-time lower bound; omitted/empty values impose no bound.
+        end: Optional exclusive ISO UTC creation-time upper bound; omitted/empty values impose no bound.
+        order_ids: Optional iterable of order identifiers; None imposes no ID filter and an empty iterable returns no orders.
+        ordering_fee_cents: Per-order ordering-provider fee in integer cents, deducted from profit.
+
+    Returns:
+        Newest-first list of enriched order dictionaries satisfying all supplied filters.
+    """
     clauses, params = [], []
     if start:
         clauses.append('o.created_at >= ?')
@@ -47,6 +60,15 @@ def load_orders(db, start=None, end=None, order_ids=None, ordering_fee_cents=0):
 
 
 def load_items(db, order_ids):
+    """Fetch line items and cached categories in batches to avoid SQLite parameter limits.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        order_ids: Sliceable sequence of order identifiers; an empty sequence produces an empty mapping.
+
+    Returns:
+        Mapping of order ID to line-item dictionaries ordered by line_item_id.
+    """
     result = {}
     for start in range(0, len(order_ids), 500):
         chunk = order_ids[start:start + 500]
@@ -59,6 +81,15 @@ def load_items(db, order_ids):
 
 
 def apply_financials(row, ordering_fee_cents=0):
+    """Enrich an order in place with effective return/match state, calculated profit and display fields.
+
+    Args:
+        row: Mutable ledger row including items, is_cancelled and joined finance/match/return fields.
+        ordering_fee_cents: Per-order ordering-provider fee in integer cents, deducted from profit.
+
+    Returns:
+        The same row dictionary, containing financial fields, quantity, title, category, ASIN, fees and candidates.
+    """
     row['return_status'] = effective_return_status(row.get('ebay_return_status'), row.get('manual_return_status'),
                                                    row.get('payment_status'))
     row['match_status'] = row.get('match_status') or 'PENDING'

@@ -10,6 +10,14 @@ class GmailNotConfigured(RuntimeError):
 
 
 def load_credentials(token_path):
+    """Load saved read-only Gmail credentials, refresh expired tokens when possible, and persist refreshed tokens with owner-only permissions.
+
+    Args:
+        token_path: Local authorized-user JSON token filename.
+
+    Returns:
+        Google Credentials instance. Raises GmailNotConfigured for absent or unusable credentials; refresh/filesystem failures propagate.
+    """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
     path = Path(token_path)
@@ -28,13 +36,29 @@ def load_credentials(token_path):
 
 class GmailClient:
     def __init__(self, token_path, service=None):
+        """Attach an injected Gmail service or build the Gmail v1 client using local read-only OAuth credentials.
+
+        Args:
+            token_path: Authorized-user token filename used when no service is supplied.
+            service: Optional injected Gmail API service, such as a test double.
+
+        Returns:
+            None. Stores the service; default construction may refresh and persist credentials.
+        """
         if service is None:
             from googleapiclient.discovery import build
             service = build('gmail', 'v1', credentials=load_credentials(token_path), cache_discovery=False)
         self.service = service
 
     def search(self, query):
-        """All message IDs matching a Gmail search query."""
+        """Collect every message ID matching a Gmail search query across all result pages.
+
+        Args:
+            query: Gmail search syntax sent as the q parameter for the current user.
+
+        Returns:
+            List of message ID strings; API failures propagate to the caller.
+        """
         ids, token = [], None
         while True:
             response = self.service.users().messages().list(userId='me', q=query, pageToken=token,
@@ -45,6 +69,14 @@ class GmailClient:
                 return ids
 
     def get(self, message_id):
+        """Fetch a full Gmail message and decode its MIME parts, preferring the first HTML body over plain text.
+
+        Args:
+            message_id: Gmail message ID for the current user.
+
+        Returns:
+            Dictionary containing id, internal_date_ms, subject, body, and is_html; undecodable UTF-8 bytes use replacement characters.
+        """
         message = self.service.users().messages().get(userId='me', id=message_id, format='full').execute()
         headers = {h['name'].lower(): h['value'] for h in message.get('payload', {}).get('headers', [])}
         html_body, text_body = None, None

@@ -25,17 +25,36 @@ const PAGE = 100;
 const MONTH = /^\d{4}-\d{2}$/;
 
 // "2026-03" -> "March" (or "March 2026" with the year).
+/**
+ * Convert a calendar-month key to a readable month label using local calendar construction.
+ *
+ * @param key - Calendar month in YYYY-MM form.
+ * @param withYear - Whether to include the year; defaults to false.
+ * @returns Localized full month name, optionally followed by the year.
+ */
 const monthName = (key: string, withYear = false) =>
   new Date(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, 1)
     .toLocaleString("en-US", withYear ? { month: "long", year: "numeric" } : { month: "long" });
 
 // January through the current month of this year, as "YYYY-MM".
+/**
+ * List every calendar month from January through the current browser-local month.
+ *
+ * @remarks Takes no arguments.
+ * @returns Array of YYYY-MM keys in chronological order for the current year.
+ */
 const thisYearMonths = () => {
   const today = new Date();
   return Array.from({ length: today.getMonth() + 1 },
     (_, i) => `${today.getFullYear()}-${String(i + 1).padStart(2, "0")}`);
 };
 
+/**
+ * Render financial summaries, selectable chart metrics, order filters, exports, and expandable orders. Loads data after filter changes and completed syncs, ignoring stale request responses.
+ *
+ * @remarks Takes no arguments.
+ * @returns React fragment containing the dashboard controls, chart, summaries, orders, and request errors.
+ */
 export default function OverviewPage() {
   const [range, setRange] = useState<RangeKey>("30d");
   const [previous, setPrevious] = useState<RangeKey>("30d"); // The preset a month view goes back to.
@@ -53,6 +72,12 @@ export default function OverviewPage() {
 
   const filters = { range, status, match_status: match, q: search.trim() };
 
+  /**
+   * Start concurrent overview and order requests for the current filters. Apply only the latest responses of each kind and record their errors independently.
+   *
+   * @remarks Takes no arguments.
+   * @returns Nothing; schedules asynchronous requests that update dashboard state.
+   */
   const load = useCallback(() => {
     // Only the newest response of each kind is applied, so a slow older request can't overwrite it.
     const overviewId = ++requests.current.overview;
@@ -78,6 +103,12 @@ export default function OverviewPage() {
   useSyncRefresh(load); // Pick up new orders and Amazon costs after every sync.
 
   const isMonth = MONTH.test(range);
+  /**
+   * Switch to a month’s daily chart while retaining the preset to return to. Ignore an empty month selection.
+   *
+   * @param month - Calendar month key in YYYY-MM form, or an empty selection.
+   * @returns Nothing; updates range and possibly previous-range state.
+   */
   const openMonth = (month: string) => {
     if (!month) return;
     if (!isMonth) setPrevious(range);
@@ -85,6 +116,12 @@ export default function OverviewPage() {
   };
   const previousLabel = RANGES.find((r) => r.key === previous)?.label ?? previous;
 
+  /**
+   * Toggle one chart metric without mutating the existing selection set.
+   *
+   * @param metric - Revenue, cost, or profit series to show or hide.
+   * @returns Nothing; replaces the selected-metrics state.
+   */
   const toggle = (metric: Metric) => {
     const next = new Set(metrics);
     if (next.has(metric)) next.delete(metric);

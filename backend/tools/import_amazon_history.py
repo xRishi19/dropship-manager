@@ -44,11 +44,26 @@ REPORT_FIELDS = ['decision', 'ebay_order_id', 'ebay_date', 'ebay_title', 'confid
 
 
 def words(text):
+    """Normalize product text and retain meaningful title words for overlap scoring.
+
+    Args:
+        text: Product title text accepted by the shared clean normalizer.
+
+    Returns:
+        Set of words longer than one character, excluding generic sourcing stop words.
+    """
     return {w for w in clean(text).split() if len(w) > 1 and w not in STOP}
 
 
 def money_cents(value):
-    """Dollar text -> cents; None for blanks and non-numbers (e.g. a spreadsheet =SUBTOTAL row)."""
+    """Convert dollar text to cents, ignoring blank cells and non-number spreadsheet summary rows.
+
+    Args:
+        value: Text with optional dollar signs and thousands separators, or a falsey value.
+
+    Returns:
+        Rounded integer cents, or None for blanks and invalid numbers.
+    """
     value = (value or '').replace('$', '').replace(',', '').strip()
     try:
         return round(float(value) * 100) if value else None
@@ -57,7 +72,15 @@ def money_cents(value):
 
 
 def read_amazon(paths, personal):
-    """Amazon orders from the CSVs, minus personal ones and rows without a date or total."""
+    """Read and deduplicate Amazon history CSV orders, excluding personal recipients and rows without required identity, date, or cost.
+
+    Args:
+        paths: Iterable of CSV filenames with browser-export column names.
+        personal: Iterable of first names whose purchases must be excluded.
+
+    Returns:
+        Tuple (order list, skipped-count dictionary). Amazon IDs become hashed source keys; invalid ISO dates propagate as ValueError.
+    """
     personal = {p.lower() for p in personal}
     orders, skipped = {}, {'personal': 0, 'no total or date': 0, 'duplicate': 0}
     for path in paths:
@@ -82,6 +105,15 @@ def read_amazon(paths, personal):
 
 
 def open_ebay_orders(db, until):
+    """Read older eBay orders with line items whose matching state still lacks a confirmed Amazon cost.
+
+    Args:
+        db: Open SQLite connection queried without writes.
+        until: Exclusive UTC creation timestamp cutoff.
+
+    Returns:
+        List of order dictionaries with shipping name and concatenated line-item titles, ordered by creation time.
+    """
     rows = db.execute('''SELECT o.order_id, o.created_at, o.ship_name, group_concat(i.title, ' | ') AS titles
         FROM orders o JOIN order_items i ON i.order_id=o.order_id
         LEFT JOIN order_matches m ON m.order_id=o.order_id
@@ -91,6 +123,16 @@ def open_ebay_orders(db, until):
 
 
 def score(order, amazon, local_day):
+    """Score an Amazon history candidate by title overlap, relative date, and recipient agreement; reject unsupported dates or conflicting recipients.
+
+    Args:
+        order: eBay order dictionary with titles and ship_name.
+        amazon: Imported Amazon order dictionary with date, words, and recipient.
+        local_day: eBay order creation date in the configured local timezone.
+
+    Returns:
+        Candidate dictionary containing score, agreement, days, signals, and Amazon row, or None for an ineligible candidate.
+    """
     days = (amazon['date'] - local_day).days
     if days not in DAY_POINTS:
         return None
@@ -109,6 +151,17 @@ def score(order, amazon, local_day):
 
 
 def plan(db, amazon_orders, until, zone):
+    """Build dry-run matching decisions using title/date scores, runner-up margins, competing orders, and leading-brand checks without writing the database.
+
+    Args:
+        db: Open SQLite connection from which unresolved eBay orders are read.
+        amazon_orders: Imported Amazon candidate order list.
+        until: Exclusive UTC cutoff for eBay order creation.
+        zone: Timezone used to turn eBay timestamps into local calendar dates.
+
+    Returns:
+        Decision list with order, MATCH/REVIEW/NO_MATCH, top candidate, runner-up score, up to five candidates, and explanatory note.
+    """
     orders = open_ebay_orders(db, until)
     scored = {}
     for order in orders:
@@ -154,6 +207,14 @@ def plan(db, amazon_orders, until, zone):
 
 
 def report_rows(decisions):
+    """Format proposed matching decisions as CSV-ready rows sorted by decision and order creation time.
+
+    Args:
+        decisions: Decision dictionaries returned by plan.
+
+    Yields:
+        Generator yielding one report dictionary per decision, with formatted dates/costs and blank fields for absent candidates.
+    """
     for d in sorted(decisions, key=lambda d: (d['decision'], d['order']['created_at'])):
         top = d['top']
         yield {'decision': d['decision'], 'ebay_order_id': d['order']['order_id'], 'ebay_date': str(d['order']['local_day']),
@@ -167,6 +228,14 @@ def report_rows(decisions):
 
 
 def candidate_json(result):
+    """Translate a CSV matching candidate into the candidate shape used by reconciliation records, using noon UTC for date-only purchases.
+
+    Args:
+        result: Scored candidate dictionary containing the imported Amazon row, date offset, score, and signals.
+
+    Returns:
+        JSON-serializable dictionary with synthetic message ID, received timestamp, cost, score, minutes_after, and signals.
+    """
     amazon = result['amazon']
     return {'gmail_message_id': amazon['id'], 'score': result['score'], 'minutes_after': result['days'] * 1440,
             'received_at': f"{amazon['date']}T12:00:00Z", 'grand_total_cents': amazon['total_cents'],
@@ -174,6 +243,17 @@ def candidate_json(result):
 
 
 def apply(db, amazon_orders, decisions, now):
+    """Persist referenced history purchases and accepted/review matches in one transaction, preserving existing MATCHED or MANUAL rows.
+
+    Args:
+        db: Open SQLite connection; this function manages commit/rollback for its writes.
+        amazon_orders: Imported purchases from which referenced candidate rows are saved.
+        decisions: Planned decisions; NO_MATCH rows are not written.
+        now: Datetime used for fetched, updated, and matched timestamps.
+
+    Returns:
+        None. Creates imported purchase rows and upserts reconciliation decisions; date-only imports remain excluded from live email matching.
+    """
     stamp = now.isoformat(timespec='seconds').replace('+00:00', 'Z')
     needed = {c['amazon']['id'] for d in decisions for c in d['candidates']}
     with db:
@@ -206,6 +286,14 @@ def apply(db, amazon_orders, decisions, now):
 
 
 def main(argv=None):
+    """Run the Amazon history import CLI, always writing a review report and optionally backing up the database before applying proposed matches.
+
+    Args:
+        argv: Optional argument list; None uses process command-line arguments.
+
+    Returns:
+        Exit code 0 after successful reporting/application. Closes the database in all cases; input, report, or database errors propagate.
+    """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('csv', nargs='+', type=Path)
     parser.add_argument('--until', default='2026-07-14', help='Last eBay order date to fill (inclusive)')

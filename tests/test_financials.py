@@ -18,50 +18,136 @@ NOW = datetime(2026, 9, 24, 18, 30, tzinfo=timezone.utc)
 
 
 def calc(status='NONE', cancelled=False, revenue=4000, cost=2500):
+    """Apply the production financial calculator to controlled revenue, cost, cancellation, and return-status inputs.
+
+    Args:
+        status: Effective return-status string passed into compute, defaulting to NONE.
+        cancelled: Whether compute should apply the cancelled-order accounting rules.
+        revenue: Net revenue in cents, or None when revenue is unknown.
+        cost: Amazon purchase cost in cents; None leaves the cost unknown.
+
+    Returns:
+        Financials dataclass containing original/effective amounts, status, flags, margin, and
+        ROI.
+    """
     return compute(is_cancelled=cancelled, return_status=status, net_revenue_cents=revenue, amazon_cost_cents=cost)
 
 
 def test_normal_profit_and_margin():
+    """Regression check: normal profit and margin.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     f = calc()
     assert (f.original_profit_cents, f.effective_profit_cents, f.excluded) == (1500, 1500, False)
     assert (f.margin, f.roi) == (0.375, 0.6)
 
 
 def test_unknown_cost_never_invents_profit():
+    """Regression check: unknown cost never invents profit.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     f = calc(cost=None)
     assert (f.original_profit_cents, f.effective_profit_cents, f.effective_revenue_cents) == (None, None, 4000)
     assert 'COST_UNKNOWN' in f.flags and not f.cost_known
 
 
 def test_cancelled_order_is_zeroed_but_original_kept():
+    """Regression check: cancelled order is zeroed but original kept.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     f = calc(cancelled=True)
     assert (f.effective_revenue_cents, f.effective_cost_cents, f.effective_profit_cents) == (0, 0, 0)
     assert (f.original_profit_cents, f.net_revenue_cents, f.display_status, f.excluded) == (1500, 4000, 'Cancelled', True)
 
 
 def test_return_started_keeps_profit_and_flags_it():
+    """Regression check: return started keeps profit and flags it.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     f = calc('RETURN_STARTED')
     assert f.effective_profit_cents == 1500 and 'RETURN_PENDING' in f.flags and not f.excluded
 
 
 @pytest.mark.parametrize('status,label', [('RETURN_COMPLETED', 'Returned'), ('REFUNDED', 'Refunded')])
 def test_completed_return_and_refund_zero_effective_values(status, label):
+    """Regression check: completed return and refund zero effective values.
+
+    Args:
+        status: Parameterized status variant, or synthetic purchase/listing status used by the
+            helper.
+        label: Expected display label for the tested financial status.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     f = calc(status)
     assert (f.effective_revenue_cents, f.effective_cost_cents, f.effective_profit_cents) == (0, 0, 0)
     assert (f.original_profit_cents, f.display_status, f.excluded) == (1500, label, True)
 
 
 def test_return_cancelled_restores_normal_profit():
+    """Regression check: return cancelled restores normal profit.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     f = calc('RETURN_CANCELLED')
     assert (f.effective_profit_cents, f.excluded, f.display_status) == (1500, False, 'Completed')
 
 
 def test_unknown_return_status_rejected():
+    """Regression check: unknown return status rejected.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     with pytest.raises(ValueError):
         calc('LOST')
 
 
 def seeded(db):
+    """Populate the database with paid, uncosted, cancelled, and refunded orders and load their calculated ledger values.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        List of loaded ledger order dictionaries after fixture setup has committed.
+    """
     orders = [ebay_order('A', created='2026-09-24T14:00:00.000Z'),  # costed
               ebay_order('B', created='2026-09-24T03:00:00.000Z'),  # previous NY day, cost unknown
               ebay_order('C', created='2026-09-23T12:00:00.000Z', cancelled=True),
@@ -77,6 +163,16 @@ def seeded(db):
 
 
 def test_cards_exclude_cancelled_and_returned_and_flag_unknown_costs(db):
+    """Regression check: cards exclude cancelled and returned and flag unknown costs.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     cards = summarize(seeded(db))
     assert cards['total_orders'] == 2
     assert cards['net_revenue_cents'] == 4000 + 3900  # A (finances) + B (estimate); C, D excluded.
@@ -86,6 +182,15 @@ def test_cards_exclude_cancelled_and_returned_and_flag_unknown_costs(db):
 
 
 def test_range_definitions_and_granularity():
+    """Regression check: range definitions and granularity.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     start, end, granularity, buckets = time_range('1d', NOW, NY)  # Today in NY (Sep 24), not a rolling 24 h.
     assert (granularity, len(buckets), end - start) == ('hour', 24, timedelta(hours=24))
     assert (start, end) == (datetime(2026, 9, 24, tzinfo=NY), datetime(2026, 9, 25, tzinfo=NY))
@@ -103,6 +208,16 @@ def test_range_definitions_and_granularity():
 
 
 def test_series_buckets_in_local_time_with_empty_days(db):
+    """Regression check: series buckets in local time with empty days.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     orders = seeded(db)
     _, _, granularity, buckets = time_range('1w', NOW, NY)
     points = {p['label']: p for p in series(orders, buckets, granularity, NY)}
@@ -113,6 +228,16 @@ def test_series_buckets_in_local_time_with_empty_days(db):
 
 
 def test_export_has_all_columns_every_status_and_safe_cells(db):
+    """Regression check: export has all columns every status and safe cells.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     text = export_csv(sorted(seeded(db), key=lambda o: o['created_at']))
     rows = list(csv.DictReader(io.StringIO(text)))
     assert list(rows[0]) == EXPORT_FIELDS
@@ -126,6 +251,16 @@ def test_export_has_all_columns_every_status_and_safe_cells(db):
 
 
 def test_dst_fall_back_hours_are_counted_once(db):
+    """Regression check: DST fall back hours are counted once.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 11, 1, 17, tzinfo=timezone.utc)
     with db:
         store_orders(db, [ebay_order('EDT', created='2026-11-01T05:30:00.000Z'),   # 01:30 EDT

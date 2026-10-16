@@ -31,11 +31,34 @@ class Skipped(Exception):
 
 
 def get_state(db, name):
+    """Read saved scheduling, progress and error state for one synchronization step.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        name: Sync-step identifier used as the sync_state primary key.
+
+    Returns:
+        State dictionary, or an empty dictionary when the step has never run.
+    """
     row = db.execute('SELECT * FROM sync_state WHERE name=?', (name,)).fetchone()
     return dict(row) if row else {}
 
 
 def save_state(db, name, now, *, success=None, error=None, cursor=None, details=None):
+    """Merge and commit a step's attempt time, success/error status and optional cursor/details.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        name: Sync-step identifier whose attempt/progress state is updated.
+        now: Reference aware datetime used for timing and persisted audit state.
+        success: Optional success flag; a truthy value advances last_success_at and clears prior errors.
+        error: Optional sanitized error message to record.
+        cursor: Optional persisted progress marker; None leaves the previous cursor unchanged.
+        details: Optional JSON-serializable step result details to persist.
+
+    Returns:
+        None; omitted cursor/details retain their previous values.
+    """
     state = get_state(db, name) or {'name': name}
     state['last_attempt_at'] = stamp(now)
     if success:
@@ -54,10 +77,26 @@ def save_state(db, name, now, *, success=None, error=None, cursor=None, details=
 
 
 def parse_stamp(value):
+    """Parse an optional ISO synchronization timestamp.
+
+    Args:
+        value: Optional ISO timestamp string; missing/empty values return None.
+
+    Returns:
+        Datetime with supplied offset, or None for a missing timestamp.
+    """
     return datetime.fromisoformat(value.replace('Z', '+00:00')) if value else None
 
 
 def accounting_start(config):
+    """Interpret the configured accounting start date as UTC midnight.
+
+    Args:
+        config: Project configuration supplying database, integrations and business settings.
+
+    Returns:
+        Aware UTC datetime for the start of accounting history.
+    """
     return datetime.fromisoformat(config.accounting.start_date).replace(tzinfo=timezone.utc)
 
 
@@ -65,19 +104,47 @@ class SyncContext:
     """Long-lived clients for the loop (keeps the eBay OAuth token between cycles)."""
 
     def __init__(self, config, ebay=None, gmail=None):
+        """Initialize reusable synchronization clients and mutable cycle progress state.
+
+        Args:
+            config: Project configuration supplying database, integrations and business settings.
+            ebay: Optional preconstructed eBay client to reuse instead of creating one lazily.
+            gmail: Optional preconstructed Gmail client to reuse instead of creating one lazily.
+
+        Returns:
+            None; stores configuration and optional injected clients without creating new clients yet.
+        """
         self.config = config
         self._ebay = ebay
         self._gmail = gmail
+        self.force = False
+        self.notifications = None
         self.current_step = None  # Shown in the UI while a cycle runs.
 
     @property
     def ebay(self):
+        """Lazily construct and cache the eBay integration client used across synchronization cycles.
+
+        Args:
+            None.
+
+        Returns:
+            Cached EbayClient configured for this context.
+        """
         if self._ebay is None:
             self._ebay = EbayClient(self.config.ebay)
         return self._ebay
 
     @property
     def gmail(self):
+        """Lazily construct and cache Gmail access, treating disabled or missing setup as a skipped step.
+
+        Args:
+            None.
+
+        Returns:
+            Cached GmailClient; raises Skipped when Gmail cannot be configured.
+        """
         if self._gmail is None:
             if not self.config.gmail.enabled:
                 raise Skipped('Gmail disabled in config')
@@ -89,8 +156,23 @@ class SyncContext:
 
 
 def backfill(db, name, start, now, chunk_days, fetch, store):
-    """Advance a resumable creation/transaction-date backfill by a few chunks. Once it
-    reaches the present it is marked complete; incremental sync takes over."""
+    """Advance resumable historical ingestion by a bounded number of committed chunks.
+
+    Advance a resumable creation/transaction-date backfill by a few chunks. Once it
+    reaches the present it is marked complete; incremental sync takes over.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        name: Backfill sync-state identifier storing the resumable cursor.
+        start: Aware initial history datetime used when there is no saved cursor.
+        now: Reference aware datetime used for timing and persisted audit state.
+        chunk_days: Maximum number of days fetched in each historical ingestion chunk.
+        fetch: Callable accepting start/end timestamp strings and returning rows for a history chunk.
+        store: Callable that persists fetched history rows using the enclosing connection.
+
+    Returns:
+        Dictionary of backfilled row count and completion state; completed cursors perform no fetches.
+    """
     saved = get_state(db, name).get('cursor')
     if saved == 'complete':
         return {'backfill_complete': True}
@@ -111,7 +193,18 @@ def backfill(db, name, start, now, chunk_days, fetch, store):
 
 
 def step_orders(db, ctx, now):
-    """Live sync: orders created or changed since the last success (with overlap)."""
+    """Fetch recently modified orders with overlap and commit their ingestion.
+
+    Live sync: orders created or changed since the last success (with overlap).
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary containing the number of changed orders fetched.
+    """
     since = parse_stamp(get_state(db, 'orders').get('last_success_at'))
     since = (since - timedelta(minutes=ctx.config.sync.order_overlap_minutes)) if since else now - timedelta(days=2)
     changed = ctx.ebay.raw_orders(stamp(since), stamp(now), 'lastmodifieddate')
@@ -121,8 +214,19 @@ def step_orders(db, ctx, now):
 
 
 def step_orders_backfill(db, ctx, now):
-    """History since accounting.start_date, a few chunks per cycle. A separate step so a
-    failing chunk never blocks live order sync. Sales it adds are tagged 'ebay_backfill'."""
+    """Resume bounded order-history chunks from the configured accounting start date.
+
+    History since accounting.start_date, a few chunks per cycle. A separate step so a
+    failing chunk never blocks live order sync. Sales it adds are tagged 'ebay_backfill'.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Backfill count/completion dictionary; imported sales use the ebay_backfill source.
+    """
     config = ctx.config
     return backfill(db, 'orders_backfill', accounting_start(config), now, config.sync.backfill_chunk_days,
                     lambda a, b: ctx.ebay.raw_orders(a, b),
@@ -130,6 +234,14 @@ def step_orders_backfill(db, ctx, now):
 
 
 def require_finances_scope(ctx):
+    """Refresh eBay access and verify consent permits authoritative Finances reads.
+
+    Args:
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+
+    Returns:
+        None; raises RuntimeError with setup guidance when the scope is missing.
+    """
     ctx.ebay.access_token()
     if ctx.ebay.finances_scope_missing:
         raise RuntimeError('eBay consent lacks the Finances scope; run python ebay_auth.py again. '
@@ -137,6 +249,16 @@ def require_finances_scope(ctx):
 
 
 def step_finances(db, ctx, now):
+    """Fetch recent posted transactions with a two-day overlap and commit refreshed finances.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary containing transaction count and number of order records updated.
+    """
     require_finances_scope(ctx)
     since = parse_stamp(get_state(db, 'finances').get('last_success_at'))
     since = (since - timedelta(days=2)) if since else now - timedelta(days=2)  # Late postings.
@@ -147,6 +269,16 @@ def step_finances(db, ctx, now):
 
 
 def step_finances_backfill(db, ctx, now):
+    """Resume bounded transaction-history chunks after checking Finances consent.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Backfill count/completion dictionary.
+    """
     require_finances_scope(ctx)
     config = ctx.config
     return backfill(db, 'finances_backfill', accounting_start(config), now, config.sync.backfill_chunk_days,
@@ -154,40 +286,111 @@ def step_finances_backfill(db, ctx, now):
 
 
 def due(db, name, now, interval):
+    """Check whether an interval-limited sync step is ready based on its last success.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        name: Interval-limited sync-step identifier to inspect.
+        now: Reference aware datetime used for timing and persisted audit state.
+        interval: Minimum timedelta required between successful scheduled step runs.
+
+    Returns:
+        None when due; raises Skipped when the interval has not elapsed.
+    """
     last = parse_stamp(get_state(db, name).get('last_success_at'))
     if last and now - last < interval:
         raise Skipped('not due')
 
 
 def step_returns(db, ctx, now):
-    due(db, 'returns', now, timedelta(minutes=ctx.config.sync.returns_interval_minutes))
+    """Fetch accounting-period return cases and commit their effective status inputs.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary containing applied return count; honors the interval unless manually forced.
+    """
+    if not ctx.force:
+        due(db, 'returns', now, timedelta(minutes=ctx.config.sync.returns_interval_minutes))
     members = ctx.ebay.returns(stamp(accounting_start(ctx.config)), stamp(now))
     with db:
         return {'returns': store_returns(db, members, now)}
 
 
 def step_categories(db, ctx, now):
+    """Fill missing category/image metadata for sold items through the shared cache writer.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary containing successful lookup count.
+    """
     return {'looked_up': store_categories(db, ctx.ebay)}
 
 
 def step_listings(db, ctx, now):
-    due(db, 'listings', now, timedelta(hours=ctx.config.sync.listings_refresh_hours))
+    """Refresh eBay listings when due or when explicitly forced.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary containing listing count; raises Skipped when its scheduled interval has not elapsed.
+    """
+    if not ctx.force:
+        due(db, 'listings', now, timedelta(hours=ctx.config.sync.listings_refresh_hours))
     return {'listings': refresh_listings(db, ctx.ebay, now)}
 
 
 def refresh_listings(db, api, now):
+    """Download current active/unsold listings and commit shared listing ingestion.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        api: eBay client used to fetch listing or item metadata.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Number of listings stored.
+    """
     listings = api.listings(now.date().isoformat())
     with db:
         return store_listings(db, listings, now)
 
 
 def gmail_rate_limited(exc):
+    """Recognize Gmail quota/rate exceptions from their response status and message.
+
+    Args:
+        exc: Exception to inspect for Gmail quota/rate-limit signals.
+
+    Returns:
+        True for quota/rate-related HTTP 403 or 429 errors, otherwise False.
+    """
     status = getattr(getattr(exc, 'resp', None), 'status', None)
     text = str(exc).lower()
     return status in (403, 429) and ('quota' in text or 'rate' in text)
 
 
 def step_gmail(db, ctx, now):
+    """Reparse stored confirmations and ingest a paced batch of newly discovered Gmail messages.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary with new_emails and reparsed counts; raises Skipped for quota limits or remaining batches.
+    """
     config = ctx.config
     personal = config.matching.personal_recipients
     reparsed = reparse_emails(db, now, personal)  # Stored emails benefit from parser improvements.
@@ -214,13 +417,33 @@ def step_gmail(db, ctx, now):
 
 
 def is_personal(parsed, personal):
+    """Identify parsed confirmations addressed to a configured personal recipient.
+
+    Args:
+        parsed: Parsed Amazon confirmation fields including first_name and parse status.
+        personal: Recipient first names identifying purchases that must not be auto-matched.
+
+    Returns:
+        True when the parsed first name case-insensitively matches the personal-recipient list.
+    """
     return bool(parsed.get('first_name')) and parsed['first_name'].lower() in {p.lower() for p in personal}
 
 
 def reparse_emails(db, now=None, personal=()):
-    """Re-run the parser on stored emails it could not fully read (their redacted bodies are kept
+    """Reparse retained redacted bodies and exclude personal purchases, committing all parser improvements.
+
+    Re-run the parser on stored emails it could not fully read (their redacted bodies are kept
     for exactly this). Emails that now parse drop their body and become matchable; their
-    fetched_at moves to `now` so the matcher re-checks older orders against them."""
+    fetched_at moves to `now` so the matcher re-checks older orders against them.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        now: Optional timestamp to assign to newly matchable emails; None preserves their previous fetched_at.
+        personal: Recipient first names identifying excluded personal purchases; defaults to an empty tuple.
+
+    Returns:
+        Number of emails newly parsed successfully; successful bodies are dropped and optional fetch timestamps updated.
+    """
     rows = db.execute("SELECT gmail_message_id, subject, body FROM amazon_email_purchases "
                       "WHERE parse_status != 'parsed' AND body IS NOT NULL").fetchall()
     improved = 0
@@ -248,6 +471,17 @@ def reparse_emails(db, now=None, personal=()):
 
 
 def store_email(db, message, now, personal=()):
+    """Parse and commit one Gmail message, retaining only necessary fields or a redacted unparsed body.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        message: Gmail message dictionary with id, subject, body, is_html and internal_date_ms.
+        now: Reference aware datetime used for timing and persisted audit state.
+        personal: Recipient first names identifying excluded personal purchases; defaults to an empty tuple.
+
+    Returns:
+        None; duplicate message IDs are ignored and personal purchases remain unmatchable.
+    """
     parsed = parse(message['subject'], message['body'], message['is_html'])
     if is_personal(parsed, personal):
         parsed['parse_status'] = 'personal'  # The seller's own purchase: kept, never matched.
@@ -265,6 +499,16 @@ def store_email(db, message, now, personal=()):
 
 
 def step_reconcile(db, ctx, now):
+    """Run and commit automatic order/email reconciliation for the accounting period.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Reference aware datetime used for timing and persisted audit state.
+
+    Returns:
+        Dictionary of counts by resulting match status.
+    """
     with db:
         return run_matching(db, ctx.config.matching, now, ctx.config.accounting.start_date)
 
@@ -276,14 +520,30 @@ STEPS = [('orders', step_orders), ('orders_backfill', step_orders_backfill), ('f
          ('listings', step_listings)]
 
 
-def run_cycle(ctx, now=None, db=None):
+def run_cycle(ctx, now=None, db=None, step_name=None):
+    """Execute all sync steps or one selected step, isolate failures, persist progress and wake sale notifications.
+
+    Args:
+        ctx: Shared SyncContext containing configuration, reusable clients and force/progress state.
+        now: Optional common attempt timestamp; None uses current UTC time.
+        db: Optional SQLite connection; None opens and later closes a connection from configuration.
+        step_name: Optional sync-step identifier; None runs the complete cycle.
+
+    Returns:
+        Step-result dictionary plus duration_seconds; closes only a connection it created.
+    """
+    if step_name is not None and step_name not in dict(STEPS):
+        raise ValueError('Unknown sync step')
     now = now or datetime.now(timezone.utc)
     own = db is None
     db = db or connect(ctx.config.database, migrate=False)
     started = time.monotonic()
     results = {}
     try:
+        ctx.force = step_name is not None
         for name, step in STEPS:
+            if step_name is not None and name != step_name:
+                continue
             ctx.current_step = name
             try:
                 details = step(db, ctx, now)
@@ -298,9 +558,13 @@ def run_cycle(ctx, now=None, db=None):
                 results[name] = {'ok': False, 'error': str(exc)[:500]}
         ctx.current_step = None
         results['duration_seconds'] = round(time.monotonic() - started, 1)
-        save_state(db, 'cycle', now, success=True, details=results)
+        if step_name is None:
+            save_state(db, 'cycle', now, success=True, details=results)
+        if ctx.notifications is not None:
+            ctx.notifications.trigger()
         return results
     finally:
+        ctx.force = False
         ctx.current_step = None
         if own:
             db.close()

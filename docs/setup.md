@@ -138,3 +138,31 @@ The original sourcing CLI uses the same database and eBay integration:
 .venv/bin/python main.py --analyze                    # candidates only, no OpenAI
 .venv/bin/python main.py --weekly --refresh --offline # regenerate this week's picks (calls OpenAI)
 ```
+
+
+### Individual syncs and Discord sale notifications
+
+Open the sync details panel and use the **Sync** button beside any step to run it alone.
+Only one manual or automatic sync can run at a time. Manual returns and listings syncs
+bypass their normal intervals; history buttons resume existing backfill progress.
+
+Set `DISCORD_SALES_WEBHOOK_URL` in the backend `.env` and restart the backend to enable
+sale notifications. Keep this URL private. The first activation time is saved in SQLite;
+only sales placed from that point forward qualify, including sales imported later.
+Use **Test Webhook** in the sync menu to send a clearly labeled sample message and
+see delivery success or an error. The sample does not change any order notification records.
+
+Notifications wait for a confirmed automatic/manual Amazon cost and posted eBay Finances.
+Profit matches the order table: eBay net revenue minus Amazon cost minus the ordering fee,
+without cashback or shared expenses. Unpaid, cancelled, refunded, and pending/completed
+return orders are excluded. Messages contain product names, quantities, an eBay take-home minus Amazon cost and ordering
+fee breakdown, final profit, separate per-order cashback, sale and confirmation timestamps,
+and an optional cached product thumbnail, without buyer information or order identifiers.
+Discord displays the timestamps in each viewer's local timezone.
+Images depend on eBay metadata availability and may be absent.
+
+The notification worker runs even when background syncing is disabled, retries failed
+delivery with backoff, and remembers confirmed deliveries across restarts. Delivery errors
+appear in sync details. Later fee changes do not send corrections. A timeout after Discord
+accepts a message can cause a duplicate on retry. Clear the environment setting and restart
+to disable delivery; reenabling retains the original activation boundary.

@@ -20,6 +20,12 @@ const COLUMNS: Column[] = [
   { key: "trend", label: "Trend" },
 ];
 
+/**
+ * Render sourcing candidates with keyword, tier, trend, and minimum-sales filters plus sortable evidence columns. Filtering and sorting operate on a derived array without changing props.
+ *
+ * @param candidates - Keyword evidence and ranking records supplied through props.
+ * @returns React fragment containing filter controls, visible count, and the sortable candidate table.
+ */
 export default function CandidateExplorer({ candidates }: { candidates: KeywordCandidate[] }) {
   const [sort, setSort] = useState<{ key: keyof KeywordCandidate; desc: boolean }>({ key: "score", desc: true });
   const [tier, setTier] = useState("");
@@ -39,6 +45,12 @@ export default function CandidateExplorer({ candidates }: { candidates: KeywordC
     });
   }, [candidates, sort, tier, trend, text, minUnits]);
 
+  /**
+   * Render a sortable column header that selects or toggles the active sort direction.
+   *
+   * @param column - Column metadata, including its data key, label, and numeric alignment flag.
+   * @returns React table-header element with a click handler and current-sort indicator.
+   */
   const header = (column: Column) => {
     const active = sort.key === column.key;
     return (

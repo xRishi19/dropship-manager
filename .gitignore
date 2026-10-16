@@ -32,3 +32,6 @@ frontend/*.tsbuildinfo
 
 # Private notes (business-specific; never shared)
 notes/
+
+# Local payment details
+/vcc.txt

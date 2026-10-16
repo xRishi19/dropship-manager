@@ -15,6 +15,15 @@ NOW = datetime(2026, 9, 25, 16, 0, tzinfo=timezone.utc)
 
 
 def test_february_is_28_daily_buckets_between_local_midnights():
+    """Regression check: february is 28 daily buckets between local midnights.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     zone = ZoneInfo('America/Los_Angeles')
     start, end, granularity, buckets = time_range('2026-02', NOW, zone)
     assert granularity == 'day' and len(buckets) == 28
@@ -23,6 +32,15 @@ def test_february_is_28_daily_buckets_between_local_midnights():
 
 
 def test_march_across_the_dst_change_has_correct_utc_bounds():
+    """Regression check: march across the DST change has correct utc bounds.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     zone = ZoneInfo('America/New_York')
     start, end, granularity, buckets = time_range('2026-03', NOW, zone)
     assert granularity == 'day' and len(buckets) == 31
@@ -31,18 +49,46 @@ def test_march_across_the_dst_change_has_correct_utc_bounds():
 
 
 def test_current_month_includes_future_days_as_empty_buckets():
+    """Regression check: current month includes future days as empty buckets.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     start, end, _, buckets = time_range('2026-09', NOW, timezone.utc)
     points = series([], buckets, 'day', timezone.utc)
     assert len(points) == 30 and all(p['orders'] == 0 and 'month' not in p for p in points)
 
 
 def test_december_rolls_into_next_year():
+    """Regression check: december rolls into next year.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     _, end, _, buckets = time_range('2025-12', NOW, timezone.utc)
     assert end == datetime(2026, 1, 1, tzinfo=timezone.utc) and len(buckets) == 31
 
 
 @pytest.mark.parametrize('range_name, count', [('12m', 12), ('ytd', 9)])
 def test_monthly_points_carry_their_local_month(range_name, count):
+    """Regression check: monthly points carry their local month.
+
+    Args:
+        range_name: Dashboard range selector used to obtain date bounds and chart buckets.
+        count: Expected selection or range-bucket count for the parametrized case.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     zone = ZoneInfo('America/New_York')
     _, _, granularity, buckets = time_range(range_name, NOW, zone)
     points = series([], buckets, granularity, zone)
@@ -52,6 +98,17 @@ def test_monthly_points_carry_their_local_month(range_name, count):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    """Construct an eBay client using this callable fake as its HTTP transport.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager for temporary environment, clock, client, or
+            dependency overrides.
+
+    Yields:
+        EbayClient instance backed by an HTTPX MockTransport.
+    """
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     config = json.loads(open('config.json').read())
     config.update(database=str(tmp_path / 'app.sqlite3'), output_dir=str(tmp_path / 'output'))
@@ -72,6 +129,16 @@ def client(tmp_path, monkeypatch):
 
 
 def test_overview_orders_and_export_agree_on_a_month(client):
+    """Regression check: overview orders and export agree on a month.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     overview = client.get('/api/overview?range=2026-03').json()
     listing = client.get('/api/orders?range=2026-03&limit=500').json()
     assert overview['cards']['total_orders'] == listing['total'] == 2
@@ -84,5 +151,16 @@ def test_overview_orders_and_export_agree_on_a_month(client):
 
 @pytest.mark.parametrize('bad', ['2099-01', '2026-13', '2026-00', '26-03'])
 def test_invalid_or_future_months_are_rejected(client, bad):
+    """Regression check: invalid or future months are rejected.
+
+    Args:
+        client: FastAPI TestClient fixture backed by an isolated database with background
+            syncing disabled.
+        bad: Token or range string that should be rejected by the implementation under test.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert client.get(f'/api/overview?range={bad}').status_code == 400
     assert client.get(f'/api/orders?range={bad}').status_code == 400

@@ -18,6 +18,14 @@ from backend.services.sourcing.weekly import weekly
 
 
 def main(argv=None):
+    """Run the sourcing CLI to import reports/download eBay data, analyze stored listings, or generate a weekly keyword schedule.
+
+    Args:
+        argv: Optional CLI argument list; None reads process command-line arguments.
+
+    Returns:
+        Exit code 0 on success or 1 after a handled operational error. Parser errors exit; the database is always closed. Selected modes may call eBay/OpenAI and write reports or exports.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--import', dest='import_data', action='store_true', help='Download current eBay data; --files enables historical backfill')

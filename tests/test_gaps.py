@@ -35,33 +35,102 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def z(moment, millis=False):
-    """UTC ISO stamp; eBay creationDate carries milliseconds, stored emails do not."""
+    """UTC ISO stamp; eBay creationDate carries milliseconds, stored emails do not.
+
+    Format a datetime as a canonical UTC ISO timestamp, optionally retaining eBay-style millisecond precision.
+
+    Args:
+        moment: Datetime used to stamp order or email records.
+        millis: Whether the UTC timestamp includes milliseconds instead of whole seconds.
+
+    Returns:
+        ISO timestamp ending in Z.
+    """
     text = moment.astimezone(UTC).isoformat(timespec='milliseconds' if millis else 'seconds')
     return text.replace('+00:00', 'Z')
 
 
 def at(**delta):
+    """Format a timestamp relative to the fixed reference order time.
+
+    Args:
+        delta: Timedelta keyword fields added to the fixed reference timestamp.
+
+    Returns:
+        UTC ISO timestamp ending in Z after applying the supplied offset.
+    """
     return z(T0 + timedelta(**delta))
 
 
 def order_at(order_id, moment, **kwargs):
+    """Build a synthetic eBay order at an exact timestamp while preserving additional factory overrides.
+
+    Args:
+        order_id: Synthetic eBay or Amazon order identifier used to distinguish test records.
+        moment: Datetime used to stamp order or email records.
+        kwargs: Keyword arguments forwarded to the mocked callable or used to override synthetic
+            payload fields.
+
+    Returns:
+        Fulfillment order dictionary whose creationDate includes milliseconds.
+    """
     return ebay_order(order_id, created=z(moment, millis=True), **kwargs)
 
 
 def seed(db, *orders, now=T0 + timedelta(hours=2)):
+    """Commit the supplied synthetic eBay orders into the isolated database at the test's reference sync time.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        now: Aware datetime used as the synchronization timestamp; defaults to two hours after
+            T0.
+        orders: Synthetic eBay order payloads to ingest into the isolated database.
+
+    Returns:
+        None. Ingests orders and their related item, sourcing, and financial rows.
+    """
     with db:
         store_orders(db, list(orders), now)
 
 
 def by_id(db):
+    """Load ledger orders and index them by their synthetic order identifiers.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        Dictionary mapping order identifiers to calculated ledger order dictionaries.
+    """
     return {o['order_id']: o for o in load_orders(db)}
 
 
 def match_rows(db):
+    """Read all reconciliation records and index them by order identifier for assertions.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        Dictionary mapping order identifiers to raw order_matches dictionaries.
+    """
     return {r['order_id']: dict(r) for r in db.execute('SELECT * FROM order_matches')}
 
 
 def effective(order):
+    """Extract the three effective accounting amounts from a loaded order.
+
+    Args:
+        order: Synthetic order identifier override, or a loaded ledger order whose effective
+            values are read.
+
+    Returns:
+        Tuple of effective revenue, effective Amazon cost, and effective profit, all in cents or
+        None.
+    """
     return order['effective_revenue_cents'], order['effective_cost_cents'], order['effective_profit_cents']
 
 
@@ -74,6 +143,16 @@ RETURN_WITHDRAWN = {'orderId': 'A', 'returnId': 'r1', 'state': 'RETURN_REQUEST_C
 # --------------------------------------------------------------------------- duplicate eBay syncs
 
 def test_replayed_and_overlapping_finance_pages_count_each_charge_once(db):
+    """Regression check: replayed and overlapping finance pages count each charge once.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, ebay_order('A', payment='PARTIALLY_REFUNDED'))
     sale, ad, refund = sale_transaction('A', 40.0), charge('A', 2.5), charge('A', 5.0, kind='REFUND', fee_type=None)
     with db:
@@ -89,6 +168,16 @@ def test_replayed_and_overlapping_finance_pages_count_each_charge_once(db):
 
 
 def test_resync_never_resets_matches_manual_cost_or_return_override(db):
+    """Regression check: resync never resets matches manual cost or return override.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     orders = [order_at('A', T0), order_at('B', T0, name='Bob Smith', city='Peoria')]
     seed(db, *orders)
     with db:
@@ -113,6 +202,17 @@ def test_resync_never_resets_matches_manual_cost_or_return_override(db):
 # --------------------------------------------------------------------------- Gmail deduplication
 
 def gmail_message(message_id, minute=5, body=None):
+    """Build a synthetic Gmail confirmation with a controlled receipt timestamp and optional HTML body.
+
+    Args:
+        message_id: Synthetic Gmail message identifier used as the purchase record key.
+        minute: Minute component used to construct the synthetic Gmail receipt timestamp.
+        body: Synthetic HTTP, email, or API request payload used to exercise the current test
+            case.
+
+    Returns:
+        Dictionary containing id, internal_date_ms, subject, body, and is_html for store_email.
+    """
     stamp = datetime(2026, 9, 24, 14, minute % 60, tzinfo=UTC).timestamp()
     return {'id': message_id, 'internal_date_ms': int(stamp * 1000), 'subject': 'Ordered: "Lug Nuts 20pc"',
             'body': body or '<p>Ship to: JANE DOE - SPRINGFIELD, IL 62704</p><p>Quantity: 1</p>'
@@ -120,6 +220,16 @@ def gmail_message(message_id, minute=5, body=None):
 
 
 def test_storing_the_same_gmail_message_twice_keeps_one_original_row(db):
+    """Regression check: storing the same Gmail message twice keeps one original row.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 9, 24, 15, tzinfo=UTC)
     store_email(db, gmail_message('m1'), now)
     store_email(db, gmail_message('m1', body='<p>Grand Total: $99.99</p>'), now + timedelta(minutes=1))
@@ -129,18 +239,55 @@ def test_storing_the_same_gmail_message_twice_keeps_one_original_row(db):
 
 class FakeGmail:
     def __init__(self, ids):
+        """Store the synthetic Gmail search identifiers and initialize the fetched-message audit list.
+
+        Args:
+            ids: Synthetic Gmail identifiers returned by the mock search.
+
+        Returns:
+            None. Initializes state on this mock client instance.
+        """
         self.ids = ids
         self.fetched = []
 
     def search(self, query):
+        """Return the configured synthetic Gmail search identifiers without performing network access.
+
+        Args:
+            query: Gmail search query supplied by the synchronizer; mock implementations validate or
+                ignore it.
+
+        Returns:
+            List of configured message identifiers, or an empty list for the blocking concurrency
+            test.
+        """
         return list(self.ids)
 
     def get(self, message_id):
+        """Record a mock Gmail message fetch and return its synthetic confirmation payload.
+
+        Args:
+            message_id: Synthetic Gmail message identifier used as the purchase record key.
+
+        Returns:
+            Gmail-style message dictionary identified by message_id; the quota-limited fake may
+            raise instead.
+        """
         self.fetched.append(message_id)
         return gmail_message(message_id, minute=len(self.fetched))
 
 
 def test_gmail_backlog_larger_than_one_cycle_is_fetched_once_and_nothing_is_lost(db):
+    """Regression check: Gmail backlog larger than one cycle is fetched once and nothing is lost.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     ids = [f'm{i:03d}' for i in range(GMAIL_MESSAGES_PER_CYCLE + 5)]
     gmail = FakeGmail(ids)
     ctx = SyncContext(Config(), gmail=gmail)
@@ -154,6 +301,16 @@ def test_gmail_backlog_larger_than_one_cycle_is_fetched_once_and_nothing_is_lost
 
 
 def test_duplicate_ids_in_one_gmail_search_are_stored_once(db):
+    """Regression check: duplicate ids in one Gmail search are stored once.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     ctx = SyncContext(Config(), gmail=FakeGmail(['m1', 'm2', 'm1']))
     step_gmail(db, ctx, datetime(2026, 9, 24, 15, tzinfo=UTC))
     assert db.execute('SELECT count(*) FROM amazon_email_purchases').fetchone()[0] == 2
@@ -162,6 +319,16 @@ def test_duplicate_ids_in_one_gmail_search_are_stored_once(db):
 # --------------------------------------------------------------------------- matching logic
 
 def test_multi_line_order_matches_on_its_total_units(db):
+    """Regression check: multi line order matches on its total units.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     two_lines = [('111', 'Lug Nuts', 1, ''), ('222', 'Spark Plugs', 2, '')]
     seed(db, order_at('A', T0, items=two_lines),
          order_at('B', T0, items=two_lines, name='Bob Smith', city='Peoria'))
@@ -177,6 +344,16 @@ def test_multi_line_order_matches_on_its_total_units(db):
 
 
 def test_partial_emails_are_never_auto_matched_but_can_be_linked_by_hand(db):
+    """Regression check: partial emails are never auto matched but can be linked by hand.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         amazon_email(db, 'm1', at(minutes=5), first_name=None, city=None, state=None, status='partial',
@@ -197,6 +374,20 @@ def test_partial_emails_are_never_auto_matched_but_can_be_linked_by_hand(db):
     (timedelta(minutes=-15), True),
     (timedelta(minutes=-15, seconds=-1), False)])
 def test_24_hour_window_boundary_through_the_matcher(db, email_delta, matched):
+    """Regression check: 24 hour window boundary through the matcher.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        email_delta: Timedelta shifting email receipt relative to the fixed eBay order creation
+            time.
+        matched: Whether the parametrized email time should result in a confirmed automatic
+            match.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))  # eBay-style timestamp with milliseconds.
     with db:
         amazon_email(db, 'm1', z(T0 + email_delta))
@@ -212,6 +403,16 @@ def test_24_hour_window_boundary_through_the_matcher(db, email_delta, matched):
 
 def test_contested_email_goes_to_review_when_the_stronger_order_does_not_lead_by_the_margin(db):
     # Both orders fit the email; A is closer in time (stronger) but only by a few points.
+    """Regression check: contested email goes to review when the stronger order does not lead by the margin.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0), order_at('B', T0 - timedelta(hours=10)))
     with db:
         amazon_email(db, 'm1', at(minutes=5))
@@ -225,6 +426,16 @@ def test_contested_email_goes_to_review_when_the_stronger_order_does_not_lead_by
 
 
 def test_clearly_stronger_order_takes_contested_email_and_rival_is_never_given_it(db):
+    """Regression check: clearly stronger order takes contested email and rival is never given it.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0), order_at('B', T0, name='Joan Doe'))  # B: first name disagrees.
     with db:
         amazon_email(db, 'm1', at(minutes=5), total_cents=2750)
@@ -240,6 +451,16 @@ def test_clearly_stronger_order_takes_contested_email_and_rival_is_never_given_i
 # --------------------------------------------------------------------------- unmatched orders
 
 def test_weak_candidate_leaves_order_pending_with_the_evidence_kept(db):
+    """Regression check: weak candidate leaves order pending with the evidence kept.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:  # Right state and name, but wrong quantity and city.
         amazon_email(db, 'm1', at(minutes=5), quantity=2, city='Chicago')
@@ -256,6 +477,16 @@ def test_weak_candidate_leaves_order_pending_with_the_evidence_kept(db):
 # --------------------------------------------------------------------------- manual override
 
 def test_manual_cost_beats_the_matched_email_and_clearing_it_falls_back_to_the_email(db):
+    """Regression check: manual cost beats the matched email and clearing it falls back to the email.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         amazon_email(db, 'm1', at(minutes=5), total_cents=2750)
@@ -272,6 +503,16 @@ def test_manual_cost_beats_the_matched_email_and_clearing_it_falls_back_to_the_e
 
 
 def test_manual_link_ignores_the_window_and_unlink_keeps_a_manual_cost(db):
+    """Regression check: manual link ignores the window and unlink keeps a manual cost.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         amazon_email(db, 'late', at(days=3), total_cents=4100)  # Outside the automatic window.
@@ -288,6 +529,16 @@ def test_manual_link_ignores_the_window_and_unlink_keeps_a_manual_cost(db):
 
 
 def test_manual_return_status_wins_over_ebay_until_cleared(db):
+    """Regression check: manual return status wins over eBay until cleared.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -306,6 +557,16 @@ def test_manual_return_status_wins_over_ebay_until_cleared(db):
 # --------------------------------------------------------------------------- financial calculations
 
 def test_profit_uses_what_ebay_actually_paid_after_fees_ads_and_partial_refunds(db):
+    """Regression check: profit uses what eBay actually paid after fees ads and partial refunds.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0, payment='PARTIALLY_REFUNDED'))
     with db:
         store_transactions(db, [sale_transaction('A', 44.0, gross=55.0, fvf=6.0, ad=1.0),
@@ -320,6 +581,15 @@ def test_profit_uses_what_ebay_actually_paid_after_fees_ads_and_partial_refunds(
 
 
 def test_losses_are_negative_and_zero_cost_has_no_roi():
+    """Regression check: losses are negative and zero cost has no ROI.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     loss = compute(is_cancelled=False, return_status='NONE', net_revenue_cents=2000, amazon_cost_cents=2500)
     assert (loss.effective_profit_cents, loss.margin, loss.roi) == (-500, -0.25, -0.2)
     free = compute(is_cancelled=False, return_status='NONE', net_revenue_cents=2000, amazon_cost_cents=0)
@@ -328,6 +598,16 @@ def test_losses_are_negative_and_zero_cost_has_no_roi():
 
 def test_cards_average_and_margin_count_only_costed_orders(db):
     # Net revenue estimates: $40 (costed $25), $20 (costed $25, a loss), $30 (cost unknown).
+    """Regression check: cards average and margin count only costed orders.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0, due=45, fee=5), order_at('B', T0, due=25, fee=5), order_at('C', T0, due=35, fee=5))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -341,6 +621,16 @@ def test_cards_average_and_margin_count_only_costed_orders(db):
 # --------------------------------------------------------------------------- cancelled / returns / refunds
 
 def test_order_cancelled_after_matching_is_zeroed_everywhere_but_keeps_its_history(db):
+    """Regression check: order cancelled after matching is zeroed everywhere but keeps its history.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     order = order_at('A', datetime(2026, 9, 23, 16, tzinfo=UTC), items=[('111', 'Lug Nuts', 2, '')])
     seed(db, order)
     with db:
@@ -362,6 +652,16 @@ def test_order_cancelled_after_matching_is_zeroed_everywhere_but_keeps_its_histo
 
 
 def test_return_started_on_ebay_keeps_profit_and_is_flagged_on_the_cards(db):
+    """Regression check: return started on eBay keeps profit and is flagged on the cards.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -374,6 +674,17 @@ def test_return_started_on_ebay_keeps_profit_and_is_flagged_on_the_cards(db):
 
 @pytest.mark.parametrize('sequence', ['return_then_refund', 'refund_then_return'])
 def test_completed_return_zeroes_profit_whichever_ebay_signal_arrives_first(db, sequence):
+    """Regression check: completed return zeroes profit whichever eBay signal arrives first.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+        sequence: Order of refund/return signals used to verify precedence remains stable.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -391,6 +702,16 @@ def test_completed_return_zeroes_profit_whichever_ebay_signal_arrives_first(db, 
 
 
 def test_withdrawn_return_on_ebay_restores_normal_profit(db):
+    """Regression check: withdrawn return on eBay restores normal profit.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -403,6 +724,16 @@ def test_withdrawn_return_on_ebay_restores_normal_profit(db):
 
 
 def test_fully_refunded_payment_status_zeroes_the_order_in_ledger_cards_and_csv(db):
+    """Regression check: fully refunded payment status zeroes the order in ledger cards and CSV.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0, payment='FULLY_REFUNDED'))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -416,7 +747,18 @@ def test_fully_refunded_payment_status_zeroes_the_order_in_ledger_cards_and_csv(
 
 
 def test_open_return_does_not_undo_a_full_refund(db):
-    """Regression: an open return case once overwrote REFUNDED and put the profit back on the dashboard."""
+    """Regression: an open return case once overwrote REFUNDED and put the profit back on the dashboard.
+
+    Verify that open return does not undo a full refund.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0, payment='FULLY_REFUNDED'))
     with db:
         manual.set_manual_cost(db, 'A', 2500, T0)
@@ -428,10 +770,29 @@ def test_open_return_does_not_undo_a_full_refund(db):
 # --------------------------------------------------------------------------- CSV output
 
 def test_export_of_no_orders_is_just_the_header():
+    """Regression check: export of no orders is just the header.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     assert list(csv.reader(io.StringIO(export_csv([])))) == [EXPORT_FIELDS]
 
 
 def test_negative_money_in_the_export_stays_numeric(db):
+    """Regression check: negative money in the export stays numeric.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(db, order_at('A', T0))  # Net revenue $39.00 (estimate).
     with db:
         manual.set_manual_cost(db, 'A', 5000, T0)  # Sold at a loss.
@@ -443,6 +804,16 @@ def test_negative_money_in_the_export_stays_numeric(db):
 # --------------------------------------------------------------------------- dashboard ranges
 
 def test_1w_daily_buckets_follow_local_days_across_the_dst_change(db):
+    """Regression check: 1w daily buckets follow local days across the DST change.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 11, 4, 17, tzinfo=UTC)  # DST ended Sun Nov 1 at 02:00 local.
     moments = {'before_range': datetime(2026, 10, 29, 3, 59, tzinfo=UTC),  # Oct 28 23:59 EDT
                'first_day': datetime(2026, 10, 29, 4, 1, tzinfo=UTC),  # Oct 29 00:01 EDT
@@ -464,6 +835,16 @@ def test_1w_daily_buckets_follow_local_days_across_the_dst_change(db):
     (datetime(2026, 3, 8, 16, tzinfo=UTC), 23),  # Noon EDT on the spring-forward day.
 ])
 def test_1d_is_the_local_calendar_day_with_real_hours_on_dst_days(now, hours):
+    """Regression check: 1d is the local calendar day with real hours on DST days.
+
+    Args:
+        now: Reference datetime used for seeded records or the parametrized dashboard range.
+        hours: Expected number of real hourly buckets on the tested daylight-saving day.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     start, end, _, buckets = time_range('1d', now, NY)
     day = now.astimezone(NY).date()
     assert (start, end) == (datetime(day.year, day.month, day.day, tzinfo=NY), datetime(day.year, day.month, day.day + 1, tzinfo=NY))
@@ -473,6 +854,15 @@ def test_1d_is_the_local_calendar_day_with_real_hours_on_dst_days(now, hours):
 
 
 def test_1d_starts_at_local_midnight_even_just_after_it():
+    """Regression check: 1d starts at local midnight even just after it.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 9, 24, 4, 15, tzinfo=UTC)  # 00:15 EDT; UTC says 04:15.
     start, end, _, buckets = time_range('1d', now, NY)
     assert start == datetime(2026, 9, 24, tzinfo=NY) and (start.hour, start.minute) == (0, 0)
@@ -480,6 +870,16 @@ def test_1d_starts_at_local_midnight_even_just_after_it():
 
 
 def test_1d_excludes_late_yesterday_and_includes_early_today(db):
+    """Regression check: 1d excludes late yesterday and includes early today.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 9, 24, 18, tzinfo=UTC)  # 14:00 EDT.
     seed(db, order_at('yesterday', datetime(2026, 9, 23, 23, 30, tzinfo=NY)),
          order_at('today', datetime(2026, 9, 24, 0, 30, tzinfo=NY)), now=now)
@@ -491,6 +891,15 @@ def test_1d_excludes_late_yesterday_and_includes_early_today(db):
 
 
 def test_1d_labels_run_from_midnight_through_11_pm():
+    """Regression check: 1d labels run from midnight through 11 pm.
+
+    Args:
+        None.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2026, 9, 24, 18, tzinfo=UTC)
     _, _, granularity, buckets = time_range('1d', now, NY)
     labels = [p['label'] for p in series([], buckets, granularity, NY)]
@@ -498,6 +907,16 @@ def test_1d_labels_run_from_midnight_through_11_pm():
 
 
 def test_month_buckets_across_the_year_boundary(db):
+    """Regression check: month buckets across the year boundary.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2027, 1, 15, 17, tzinfo=UTC)
     moments = {'jan_2026': datetime(2026, 1, 20, 17, tzinfo=UTC),  # Older than 12 months.
                'feb_2026': datetime(2026, 2, 1, 5, 30, tzinfo=UTC),  # Feb 1 00:30 EST, first 12m bucket.
@@ -506,6 +925,14 @@ def test_month_buckets_across_the_year_boundary(db):
     seed(db, *[order_at(name, moment) for name, moment in moments.items()], now=now)
 
     def points(range_name):
+        """Calculate chart points and included order identifiers for a captured year-boundary dataset and date range.
+
+        Args:
+            range_name: Dashboard range selector used to obtain date bounds and chart buckets.
+
+        Returns:
+            Tuple containing label-to-order-count mapping and the set of included order identifiers.
+        """
         start, end, granularity, buckets = time_range(range_name, now, NY)
         orders = load_orders(db, utc_iso(start), utc_iso(end))
         return {p['label']: p['orders'] for p in series(orders, buckets, granularity, NY)}, {o['order_id'] for o in orders}
@@ -519,6 +946,16 @@ def test_month_buckets_across_the_year_boundary(db):
 
 
 def test_order_in_the_first_second_of_a_range_belongs_to_that_range(db):
+    """Regression check: order in the first second of a range belongs to that range.
+
+    Args:
+        db: Migrated SQLite connection supplied by the test fixture; used to seed or inspect
+            isolated records.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     now = datetime(2027, 1, 15, 17, tzinfo=UTC)
     midnight = datetime(2027, 1, 1, tzinfo=NY)  # Local midnight, New Year's Day.
     seed(db, order_at('A', midnight), now=now)
@@ -534,7 +971,20 @@ FIXED_NOW = datetime(2026, 9, 24, 18, tzinfo=UTC)
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    """App on a temp DB with the sync loop off, New York buckets and a frozen dashboard clock."""
+    """App on a temp DB with the sync loop off, New York buckets and a frozen dashboard clock.
+
+    Reject the configured expired token and validate that retried requests use the replacement token.
+
+    Args:
+        tmp_path: Pytest temporary directory for isolated databases, configuration files,
+            exports, and backups.
+        monkeypatch: Pytest patch manager used to remove the model API key and install a
+            controllable dashboard clock.
+
+    Yields:
+        HTTPX 401 Response for the old token or the delegated successful response for the
+        refreshed token.
+    """
     monkeypatch.delenv('OPENAI_API_KEY', raising=False)
     config = json.loads((REPO / 'config.json').read_text())
     config.update(database=str(tmp_path / 'app.sqlite3'), output_dir=str(tmp_path / 'output'))
@@ -555,6 +1005,16 @@ def api(tmp_path, monkeypatch):
 
 
 def test_api_return_override_restore_path(api):
+    """Regression check: API return override restore path.
+
+    Args:
+        api: Isolated API client fixture, or mock HTTP dispatcher when configuring a fake
+            transport.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(api.db, order_at('A', FIXED_NOW - timedelta(days=2)))
     with api.db:
         store_returns(api.db, [RETURN_OPEN], FIXED_NOW)
@@ -571,6 +1031,16 @@ def test_api_return_override_restore_path(api):
 
 
 def test_api_manual_cost_parsing_and_validation(api):
+    """Regression check: API manual cost parsing and validation.
+
+    Args:
+        api: Isolated API client fixture, or mock HTTP dispatcher when configuring a fake
+            transport.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(api.db, order_at('A', FIXED_NOW - timedelta(days=1)))
     assert api.post('/api/orders/A/amazon-cost', json={'amount': '$1,234.56'}).json()['amazon_cost_cents'] == 123456
     assert api.post('/api/orders/A/amazon-cost', json={'amount': '-5'}).status_code == 400
@@ -580,6 +1050,16 @@ def test_api_manual_cost_parsing_and_validation(api):
 
 
 def test_api_recheck_keeps_manual_link_and_replace_moves_the_email(api):
+    """Regression check: API recheck keeps manual link and replace moves the email.
+
+    Args:
+        api: Isolated API client fixture, or mock HTTP dispatcher when configuring a fake
+            transport.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     created = FIXED_NOW - timedelta(hours=3)
     seed(api.db, order_at('A', created), order_at('B', created))
     with api.db:
@@ -594,6 +1074,16 @@ def test_api_recheck_keeps_manual_link_and_replace_moves_the_email(api):
 
 
 def test_api_filters_and_cards_for_unmatched_and_review_orders(api):
+    """Regression check: API filters and cards for unmatched and review orders.
+
+    Args:
+        api: Isolated API client fixture, or mock HTTP dispatcher when configuring a fake
+            transport.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     created = FIXED_NOW - timedelta(hours=3)
     seed(api.db, order_at('A', created), order_at('B', created), order_at('C', created, name='Carl Smith', city='Peoria'))
     with api.db:
@@ -610,6 +1100,16 @@ def test_api_filters_and_cards_for_unmatched_and_review_orders(api):
 
 
 def test_api_export_all_includes_cancelled_and_old_orders_filtered_keeps_cancelled(api):
+    """Regression check: API export all includes cancelled and old orders filtered keeps cancelled.
+
+    Args:
+        api: Isolated API client fixture, or mock HTTP dispatcher when configuring a fake
+            transport.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(api.db, order_at('OLD', datetime(2025, 6, 1, 12, tzinfo=UTC)),
          order_at('A', FIXED_NOW - timedelta(days=3)),
          order_at('C', FIXED_NOW - timedelta(days=2), cancelled=True))
@@ -623,6 +1123,16 @@ def test_api_export_all_includes_cancelled_and_old_orders_filtered_keeps_cancell
 
 
 def test_api_overview_year_boundary_and_dst_ranges(api):
+    """Regression check: API overview year boundary and DST ranges.
+
+    Args:
+        api: Isolated API client fixture, or mock HTTP dispatcher when configuring a fake
+            transport.
+
+    Returns:
+        None. Successful completion means the assertions passed; unexpected results raise
+        AssertionError or fail a pytest exception check.
+    """
     seed(api.db, order_at('nye', datetime(2027, 1, 1, 4, 30, tzinfo=UTC)),
          order_at('new_year', datetime(2027, 1, 1, 5, 30, tzinfo=UTC)),
          order_at('dst', datetime(2026, 11, 2, 4, 30, tzinfo=UTC)))  # Nov 1 23:30 EST

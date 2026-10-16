@@ -14,17 +14,45 @@ HISTORY_WEEKS = 8
 
 
 def week_of(as_of):
+    """Find the Monday anchoring the calendar week containing an analysis date.
+
+    Args:
+        as_of: Inclusive analysis day as an ISO YYYY-MM-DD string.
+
+    Returns:
+        Monday date as an ISO YYYY-MM-DD string.
+    """
     day = date.fromisoformat(as_of)
     return (day - timedelta(days=day.weekday())).isoformat()
 
 
 def history(db, week):
+    """Load saved recommendation payloads strictly before a selected week.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        week: ISO Monday date identifying the selected recommendation week.
+
+    Returns:
+        Chronologically ordered list of decoded weekly payload dictionaries.
+    """
     return [json.loads(r['payload']) for r in db.execute('SELECT payload FROM weeks WHERE week<? ORDER BY week', (week,))]
 
 
 def outcomes(db, earlier, as_of):
-    """Listings started during a recommendation week whose titles contain that week's
-    keyword, and how they sold. Attribution by title is an approximation."""
+    """Attribute listing launches and observed sales to recent recommendation weeks using title containment.
+
+    Listings started during a recommendation week whose titles contain that week's
+    keyword, and how they sold. Attribution by title is an approximation.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        earlier: Chronologically ordered saved weekly recommendation payloads.
+        as_of: Inclusive analysis day as an ISO YYYY-MM-DD string.
+
+    Returns:
+        List of week dictionaries containing per-keyword listing/sales metrics or a no_data outcome.
+    """
     listings = [(r['start_date'], normalized_words(r['title']), r['units']) for r in db.execute(
         '''SELECT l.start_date, l.title, coalesce(sum(s.quantity),0) units FROM listings l
            LEFT JOIN sales s ON s.item_id=l.item_id AND s.sold_date<=?
@@ -48,9 +76,21 @@ def outcomes(db, earlier, as_of):
 
 
 def resting(candidates, earlier, week, weeks):
-    """Explore keywords from the last `weeks` weeks rest while their tests run (results take
+    """Calculate explore-keyword cooldowns while releasing oldest restrictions if too few distinct candidates remain.
+
+    Explore keywords from the last `weeks` weeks rest while their tests run (results take
     60–90 days). If too few distinct explore candidates remain, the least recently explored
-    return first. Proven keywords never rest."""
+    return first. Proven keywords never rest.
+
+    Args:
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        earlier: Chronologically ordered saved weekly recommendation payloads.
+        week: ISO Monday date identifying the selected recommendation week.
+        weeks: Number of prior weeks included in explore cooldown.
+
+    Returns:
+        List of keyword strings still resting; proven candidates never rest.
+    """
     cutoff = (date.fromisoformat(week) - timedelta(weeks=weeks)).isoformat()
     last = {}
     for payload in earlier:
@@ -61,6 +101,14 @@ def resting(candidates, earlier, week, weeks):
     pool = [c['keyword'] for c in candidates if c.get('tier') == 'explore']
 
     def distinct(keywords):
+        """Count mutually nonredundant keywords in input order for cooldown capacity checks.
+
+        Args:
+            keywords: Iterable of keyword strings to compare for redundancy.
+
+        Returns:
+            Integer number of retained distinct keyword concepts.
+        """
         kept = []
         for keyword in keywords:
             if not any(redundant(keyword, k) for k in kept):
@@ -74,6 +122,19 @@ def resting(candidates, earlier, week, weeks):
 
 def schedule(selection, candidates, earlier, method='gpt', cooled=(), min_new_category=4):
     # The fallback cannot always meet the new-category minimum, and says so in its market labels.
+    """Turn validated tier picks into one Proven and one Explore assignment per day with history statuses.
+
+    Args:
+        selection: Selection instance or structured proven/explore picks accepted by validation.
+        candidates: Candidate dictionaries with factual scores and proven/explore tier assignments.
+        earlier: Chronologically ordered saved weekly recommendation payloads.
+        method: Selection source label; defaults to gpt, while fallback relaxes the new-category requirement.
+        cooled: Recently explored keyword strings currently excluded by cooldown.
+        min_new_category: Required number of explore picks targeting new categories.
+
+    Returns:
+        Tuple (fourteen schedule rows, previously selected keyword strings now dropped).
+    """
     selection = validate_selection(selection, candidates, cooled, min_new_category if method == 'gpt' else 0)
     lookup = {c['keyword']: c for c in candidates}
     previous = earlier[-1]['results'] if earlier else []
@@ -99,6 +160,18 @@ def schedule(selection, candidates, earlier, method='gpt', cooled=(), min_new_ca
 
 
 def weekly(db, config, as_of, refresh=False, selector=select):
+    """Reuse or generate a weekly recommendation, persist its payload and export analysis/report artifacts.
+
+    Args:
+        db: Open SQLite connection used for the query or write.
+        config: Project configuration supplying database, integrations and business settings.
+        as_of: Inclusive analysis day as an ISO YYYY-MM-DD string.
+        refresh: Whether to regenerate the week rather than re-export a saved recommendation.
+        selector: Injectable semantic selection callable; defaults to the OpenAI-backed selector.
+
+    Returns:
+        Weekly payload dictionary; may spend OpenAI calls and use deterministic fallback on selection failures.
+    """
     week = week_of(as_of)
     saved = db.execute('SELECT payload FROM weeks WHERE week=?', (week,)).fetchone()
     if saved and not refresh:

@@ -1,5 +1,14 @@
 import { Cards, money, percent } from "@/lib/api";
 
+/**
+ * Render a dashboard statistic with its label, formatted value, optional tone, and multiline detail.
+ *
+ * @param label - Statistic heading.
+ * @param value - Preformatted statistic value.
+ * @param sub - Optional supplementary text; newlines are preserved.
+ * @param tone - Optional pos/neg CSS class for the value.
+ * @returns React element containing one statistic card.
+ */
 function Stat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "pos" | "neg" }) {
   return (
     <div className="card stat">
@@ -10,8 +19,20 @@ function Stat({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
+/**
+ * Render aggregate order and financial cards, accounting for exclusions, unknown costs, expenses, ordering fees, and informational cashback.
+ *
+ * @param cards - Backend-calculated dashboard totals and completeness indicators supplied through props.
+ * @returns React element containing the dashboard’s statistic cards.
+ */
 export default function SummaryCards({ cards }: { cards: Cards }) {
   const excluded = cards.excluded.cancelled + cards.excluded.returned + cards.excluded.refunded;
+  /**
+   * Choose the financial value’s positive/negative display tone, leaving missing values unstyled.
+   *
+   * @param cents - Signed monetary value in cents, or null when unavailable.
+   * @returns pos for zero/positive values, neg for negative values, or undefined for null.
+   */
   const tone = (cents: number | null) => (cents === null ? undefined : cents >= 0 ? "pos" : "neg");
   const awaiting = cards.awaiting_cost ? `${cards.awaiting_cost} awaiting Amazon cost` : "All costs known";
   return (

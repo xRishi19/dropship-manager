@@ -10,6 +10,12 @@ const LINKS = [
   { href: "/expenses", label: "Expenses" },
 ];
 
+/**
+ * Render shared navigation and sync controls, highlighting the link matching the current pathname.
+ *
+ * @remarks Takes no arguments.
+ * @returns React header containing the brand, active navigation links, and sync indicator.
+ */
 export default function TopBar() {
   const path = usePathname();
   return (
